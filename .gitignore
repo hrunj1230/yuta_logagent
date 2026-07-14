@@ -11,3 +11,17 @@ wheels/
 .env
 
 .memsearch
+.DS_Store
+*.lock
+
+# ChromaDB data
+chroma_db/
+chroma_data/
+
+docs
+repos/
+test_retrieval.py
+test_search.py
+SETUP.md
+show_available_dates.py
+debug_chromadb.py

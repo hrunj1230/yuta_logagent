@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Log Maker - Git 연동</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            padding: 40px;
+        }
+
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 2em;
+        }
+
+        .subtitle {
+            color: #666;
+            margin-bottom: 40px;
+            font-size: 1.1em;
+        }
+
+        .section {
+            margin-bottom: 40px;
+            padding: 30px;
+            background: #f8f9fa;
+            border-radius: 15px;
+            border-left: 5px solid #667eea;
+        }
+
+        .section h2 {
+            color: #667eea;
+            margin-bottom: 20px;
+            font-size: 1.5em;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #333;
+            font-weight: 600;
+        }
+
+        input[type="text"] {
+            width: 100%;
+            padding: 12px 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 1em;
+            transition: border-color 0.3s;
+        }
+
+        input[type="text"]:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .hint {
+            font-size: 0.85em;
+            color: #666;
+            margin-top: 5px;
+        }
+
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 14px 30px;
+            border-radius: 8px;
+            font-size: 1em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            width: 100%;
+        }
+
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        button:active {
+            transform: translateY(0);
+        }
+
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .result {
+            margin-top: 20px;
+            padding: 20px;
+            border-radius: 8px;
+            display: none;
+            animation: slideIn 0.3s ease-out;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(-10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .result.success {
+            background: #d4edda;
+            border: 2px solid #c3e6cb;
+            color: #155724;
+            display: block;
+        }
+
+        .result.error {
+            background: #f8d7da;
+            border: 2px solid #f5c6cb;
+            color: #721c24;
+            display: block;
+        }
+
+        .result pre {
+            background: white;
+            padding: 15px;
+            border-radius: 5px;
+            overflow-x: auto;
+            margin-top: 10px;
+            font-size: 0.9em;
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 20px;
+        }
+
+        .loading.active {
+            display: block;
+        }
+
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 10px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .example {
+            background: #fff3cd;
+            border: 1px solid #ffc107;
+            padding: 10px;
+            border-radius: 5px;
+            margin-top: 10px;
+            font-size: 0.9em;
+        }
+
+        .example strong {
+            color: #856404;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 Log Maker</h1>
+        <p class="subtitle">Git 저장소에서 TIL을 가져와 자동으로 일지를 생성합니다</p>
+
+        <!-- Git 동기화 섹션 -->
+        <div class="section">
+            <h2>📦 1단계: Git 저장소 동기화</h2>
+
+            <form id="gitSyncForm">
+                <div class="form-group">
+                    <label for="userId">사용자 ID</label>
+                    <input type="text" id="userId" value="hrun" required>
+                    <div class="hint">예: hrun, user_123, alice</div>
+                </div>
+
+                <div class="form-group">
+                    <label for="repoUrl">Git 저장소 URL</label>
+                    <input type="text" id="repoUrl" placeholder="https://github.com/username/Yuta_TIL.git" required>
+                    <div class="example">
+                        <strong>예시:</strong><br>
+                        • https://github.com/username/Yuta_TIL.git<br>
+                        • https://github.com/username/til.git<br>
+                        • https://gitlab.com/username/notes.git
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="branch">브랜치 (선택)</label>
+                    <input type="text" id="branch" value="main" placeholder="main">
+                    <div class="hint">기본값: main</div>
+                </div>
+
+                <button type="submit" id="syncButton">🔄 동기화 & 임베딩 시작</button>
+            </form>
+
+            <div class="loading" id="syncLoading">
+                <div class="spinner"></div>
+                <p>Git 저장소를 복제하고 임베딩 중입니다...<br>잠시만 기다려주세요.</p>
+            </div>
+
+            <div class="result" id="syncResult"></div>
+        </div>
+
+        <!-- 일지 생성 섹션 -->
+        <div class="section">
+            <h2>📝 2단계: 일지 생성</h2>
+
+            <form id="logForm">
+                <div class="form-group">
+                    <label for="logUserId">사용자 ID</label>
+                    <input type="text" id="logUserId" value="hrun" required>
+                    <div class="hint">위에서 동기화한 사용자 ID와 동일해야 합니다</div>
+                </div>
+
+                <div class="form-group">
+                    <label for="date">날짜</label>
+                    <input type="text" id="date" placeholder="2026년 5월 14일" required>
+                    <div class="example">
+                        <strong>지원 형식:</strong><br>
+                        • 2026년 5월 14일<br>
+                        • 5월 14일<br>
+                        • 2026-05-14
+                    </div>
+                </div>
+
+                <button type="submit" id="logButton">✨ 일지 생성</button>
+            </form>
+
+            <div class="loading" id="logLoading">
+                <div class="spinner"></div>
+                <p>일지를 생성하는 중입니다...</p>
+            </div>
+
+            <div class="result" id="logResult"></div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = window.location.origin;
+
+        // Git 동기화
+        document.getElementById('gitSyncForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const userId = document.getElementById('userId').value.trim();
+            const repoUrl = document.getElementById('repoUrl').value.trim();
+            const branch = document.getElementById('branch').value.trim() || 'main';
+
+            const syncButton = document.getElementById('syncButton');
+            const syncLoading = document.getElementById('syncLoading');
+            const syncResult = document.getElementById('syncResult');
+
+            // UI 초기화
+            syncButton.disabled = true;
+            syncLoading.classList.add('active');
+            syncResult.style.display = 'none';
+
+            try {
+                const response = await fetch(`${API_BASE}/sync_git_repo`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        user_id: userId,
+                        repo_url: repoUrl,
+                        branch: branch
+                    })
+                });
+
+                const result = await response.json();
+
+                syncLoading.classList.remove('active');
+
+                if (result.success) {
+                    syncResult.className = 'result success';
+                    syncResult.innerHTML = `
+                        <h3>✅ 동기화 성공!</h3>
+                        <p><strong>사용자:</strong> ${result.user_id}</p>
+                        <p><strong>저장소:</strong> ${result.repo_url}</p>
+                        <p><strong>브랜치:</strong> ${result.branch}</p>
+                        <p><strong>결과:</strong> ${result.embedding_result}</p>
+                        <pre>${JSON.stringify(result, null, 2)}</pre>
+                    `;
+
+                    // 일지 생성 폼의 user_id 자동 입력
+                    document.getElementById('logUserId').value = userId;
+                } else {
+                    syncResult.className = 'result error';
+                    syncResult.innerHTML = `
+                        <h3>❌ 동기화 실패</h3>
+                        <p><strong>에러:</strong> ${result.error}</p>
+                        <p><strong>상세:</strong> ${result.details}</p>
+                        <pre>${JSON.stringify(result, null, 2)}</pre>
+                    `;
+                }
+            } catch (error) {
+                syncLoading.classList.remove('active');
+                syncResult.className = 'result error';
+                syncResult.innerHTML = `
+                    <h3>❌ 요청 실패</h3>
+                    <p>${error.message}</p>
+                `;
+            } finally {
+                syncButton.disabled = false;
+            }
+        });
+
+        // 일지 생성
+        document.getElementById('logForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const userId = document.getElementById('logUserId').value.trim();
+            const date = document.getElementById('date').value.trim();
+
+            const logButton = document.getElementById('logButton');
+            const logLoading = document.getElementById('logLoading');
+            const logResult = document.getElementById('logResult');
+
+            // UI 초기화
+            logButton.disabled = true;
+            logLoading.classList.add('active');
+            logResult.style.display = 'none';
+
+            try {
+                const response = await fetch(`${API_BASE}/call_agent`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        req: `${date} 일지 작성해줘`,
+                        thread_id: 'web_' + Date.now()
+                    })
+                });
+
+                const result = await response.text();
+
+                logLoading.classList.remove('active');
+                logResult.className = 'result success';
+                logResult.innerHTML = `
+                    <h3>✅ 일지 생성 완료!</h3>
+                    <pre>${result}</pre>
+                `;
+
+            } catch (error) {
+                logLoading.classList.remove('active');
+                logResult.className = 'result error';
+                logResult.innerHTML = `
+                    <h3>❌ 생성 실패</h3>
+                    <p>${error.message}</p>
+                `;
+            } finally {
+                logButton.disabled = false;
+            }
+        });
+    </script>
+</body>
+</html>
