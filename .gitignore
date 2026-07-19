@@ -15,11 +15,10 @@ wheels/
 *.lock
 
 # ChromaDB data
-chroma_db/
-chroma_data/
+chroma_db
 
-docs
-repos/
+docs/
+repos
 test_retrieval.py
 test_search.py
 SETUP.md
