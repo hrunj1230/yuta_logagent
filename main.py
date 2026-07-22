@@ -1,20 +1,16 @@
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
 from dotenv import load_dotenv
 import os
 
 load_dotenv()
 from src.router import router
+from storage.database import init_db
+
+# 데이터베이스 초기화 (테이블이 없으면 자동 생성)
+init_db()
 
 app = FastAPI(title="log_maker")
+
+# 라우터 등록 (/, /login-form, /user, /log-maker 등)
 app.include_router(router)
-
-# Static 파일 서빙 (웹 UI)
-if os.path.exists("./static"):
-    app.mount("/static", StaticFiles(directory="static"), name="static")
-
-    @app.get("/")
-    async def read_index():
-        """메인 페이지 - Git 연동 UI"""
-        return FileResponse("static/index.html")

@@ -9,6 +9,8 @@ import zipfile
 import tempfile
 import json
 import os
+from datetime import datetime
+from sqlalchemy.orm import Session
 ## chroma 인덱싱
 
 @tool
@@ -227,6 +229,7 @@ def maker_logfile(date: str, content: str)-> str:
     return f"✅ 일지 저장 완료: {filename}"
 
 ## 사용자별 임베딩 함수 (Git 연동용)
+# @tool 제거: 이것은 Agent가 직접 호출하는 도구가 아니라 내부 헬퍼 함수
 def embedding_file_for_user(user_id: str, path: str) -> str:
     """
     사용자별로 파일을 임베딩 (컬렉션 분리)
@@ -340,7 +343,7 @@ def embedding_file_for_user(user_id: str, path: str) -> str:
     vectorstore = Chroma(
         collection_name=collection_name,  # 사용자별 컬렉션!
         embedding_function=llm_router.local_embedding,
-        client=llm_router.chromadb.PersistentClient(path="./chroma_db")  # 서버 모드 클라이언트 사용
+        client=llm_router.chroma_client  # 기존 클라이언트 사용 (일관성 유지)
     )
 
     print(f"[{user_id}] ChromaDB 컬렉션 '{collection_name}'에 저장 중...")
@@ -348,6 +351,223 @@ def embedding_file_for_user(user_id: str, path: str) -> str:
     print(f"✅ [{user_id}] 완료! {len(non_empty_docs)}개 문서가 임베딩되었습니다.")
 
     return f"✅ 사용자 '{user_id}': {len(non_empty_docs)}개 문서 임베딩 완료 (컬렉션: {collection_name})"
+
+
+## Source 관리 Tool들
+
+@tool
+def add_source_to_db(
+    user_id: str,
+    name: str,
+    source_type: str,
+    location: str
+) -> str:
+    """
+    학습 소스를 추가합니다. Git URL을 받으면 자동으로 클론하고 임베딩합니다.
+
+    **중요**: Git 저장소 URL(https://github.com/..., .git)을 받으면:
+    1. 자동으로 git clone 실행
+    2. 클론된 파일들을 임베딩하여 벡터DB에 저장
+    3. 데이터베이스에 소스 정보 저장
+
+    사용자가 로컬에 클론할 필요 없습니다! URL만 제공하면 모든 것이 자동 처리됩니다.
+
+    Args:
+        user_id: 사용자 ID
+        name: 소스 이름 (예: "Yuta_TIL", "내 노트")
+        source_type: "git" (Git 저장소) 또는 "local_til" (로컬 경로)
+        location: Git 저장소 URL (예: https://github.com/user/repo.git) 또는 로컬 경로
+
+    Returns:
+        성공 메시지 (클론 및 임베딩 완료 포함)
+
+    Examples:
+        >>> add_source_to_db("hrun", "Yuta_TIL", "git", "https://github.com/hrunj1230/Yuta_TIL.git")
+        "✅ Git 저장소 추가 완료! 자동으로 클론 및 임베딩이 완료되었습니다."
+    """
+    import subprocess
+    import shutil
+    from storage.models import Source, SourceType
+    from storage.database import SessionLocal
+
+    db = SessionLocal()
+
+    try:
+        # 소스 타입 변환
+        type_mapping = {
+            "git": SourceType.GIT,
+            "local_til": SourceType.LOCAL_TIL,
+            "agent_chatlog": SourceType.AGENT_CHATLOG,
+            "memsearch": SourceType.MEMSEARCH,
+        }
+
+        if source_type.lower() not in type_mapping:
+            return f"❌ 잘못된 소스 타입: {source_type}. 사용 가능한 타입: git, local_til, agent_chatlog, memsearch"
+
+        # 중복 체크
+        existing = db.query(Source).filter(
+            Source.user_id == user_id,
+            Source.type == type_mapping[source_type.lower()],
+            Source.location == location
+        ).first()
+
+        if existing:
+            return f"⚠️ 이미 등록된 소스입니다: {existing.name} ({location})"
+
+        # 1️⃣ 먼저 Source를 DB에 저장 (임베딩 실패해도 저장 보장)
+        new_source = Source(
+            user_id=user_id,
+            name=name,
+            type=type_mapping[source_type.lower()],
+            location=location,
+            last_synced_at=datetime.now(),
+            is_active=True
+        )
+
+        db.add(new_source)
+        db.commit()
+        db.refresh(new_source)
+        print(f"✅ Source 저장 완료: {name} (ID: {new_source.id})")
+
+        # 2️⃣ Git 저장소인 경우 클론 및 임베딩 시도
+        embedding_success = False
+        embedding_error = None
+
+        if source_type.lower() == "git":
+            try:
+                # 사용자별 저장 디렉토리
+                user_dir = f"./repos/{user_id}"
+                repo_name = location.rstrip('/').split('/')[-1].replace('.git', '')
+                local_path = f"{user_dir}/{repo_name}"
+
+                # 기존 디렉토리 삭제
+                if os.path.exists(local_path):
+                    shutil.rmtree(local_path)
+
+                # 사용자 디렉토리 생성
+                os.makedirs(user_dir, exist_ok=True)
+
+                # Git clone (shallow clone으로 빠르게)
+                print(f"[Git Sync] Cloning {location} to {local_path}...")
+                subprocess.run(
+                    ["git", "clone", "--depth", "1", location, local_path],
+                    check=True,
+                    capture_output=True,
+                    text=True
+                )
+                print(f"[Git Sync] Clone 완료!")
+
+                # 임베딩 (사용자별 컬렉션)
+                print(f"[Embedding] Starting embedding for {local_path}...")
+                embedding_result = embedding_file_for_user(user_id, local_path)
+                print(f"[Embedding] 완료! {embedding_result}")
+                embedding_success = True
+
+            except subprocess.CalledProcessError as e:
+                error_msg = e.stderr if e.stderr else str(e)
+                embedding_error = f"Git clone 실패: {error_msg}"
+                print(f"❌ {embedding_error}")
+            except Exception as e:
+                embedding_error = f"임베딩 실패: {str(e)}"
+                print(f"❌ {embedding_error}")
+
+        # 3️⃣ 결과 메시지 반환
+        if source_type.lower() == "git":
+            if embedding_success:
+                return f"✅ Git 저장소 추가 완료!\n이름: {name}\n위치: {location}\n\n🔄 자동으로 클론 및 임베딩이 완료되었습니다.\n이제 일지 작성 시 이 저장소의 내용을 참조할 수 있습니다!"
+            else:
+                return f"⚠️ Git 저장소 추가 완료 (임베딩 실패)\n이름: {name}\n위치: {location}\n\n저장소는 등록되었지만 임베딩 중 오류가 발생했습니다:\n{embedding_error}\n\n나중에 다시 동기화를 시도해주세요."
+        else:
+            return f"✅ 소스 추가 완료!\n이름: {name}\n타입: {source_type}\n위치: {location}"
+
+    except Exception as e:
+        db.rollback()
+        return f"❌ 소스 저장 실패: {str(e)}"
+    finally:
+        db.close()
+
+
+@tool
+def get_user_sources(user_id: str) -> str:
+    """
+    사용자의 등록된 소스 목록을 조회합니다.
+
+    Args:
+        user_id: 사용자 ID
+
+    Returns:
+        소스 목록 (텍스트 형식)
+    """
+    from storage.models import Source
+    from storage.database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        sources = db.query(Source).filter(
+            Source.user_id == user_id,
+            Source.is_active == True
+        ).all()
+
+        if not sources:
+            return f"📭 '{user_id}' 사용자의 등록된 소스가 없습니다."
+
+        result = f"📚 '{user_id}' 사용자의 등록된 소스 ({len(sources)}개):\n\n"
+
+        for idx, source in enumerate(sources, 1):
+            result += f"{idx}. {source.name}\n"
+            result += f"   - 타입: {source.type.value}\n"
+            result += f"   - 위치: {source.location}\n"
+            result += f"   - 마지막 동기화: {source.last_synced_at.strftime('%Y-%m-%d %H:%M') if source.last_synced_at else '없음'}\n"
+            result += f"   - ID: {source.id}\n\n"
+
+        return result
+
+    except Exception as e:
+        return f"❌ 소스 조회 실패: {str(e)}"
+    finally:
+        db.close()
+
+
+@tool
+def delete_source_from_db(source_id: int, user_id: str) -> str:
+    """
+    등록된 소스를 삭제합니다.
+
+    Args:
+        source_id: 삭제할 소스의 ID
+        user_id: 사용자 ID (권한 확인용)
+
+    Returns:
+        삭제 결과 메시지
+    """
+    from storage.models import Source
+    from storage.database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        # 소스 조회 (권한 확인 포함)
+        source = db.query(Source).filter(
+            Source.id == source_id,
+            Source.user_id == user_id
+        ).first()
+
+        if not source:
+            return f"❌ 소스를 찾을 수 없거나 삭제 권한이 없습니다. (ID: {source_id})"
+
+        source_name = source.name
+        source_location = source.location
+
+        # 소스 삭제
+        db.delete(source)
+        db.commit()
+
+        return f"✅ 소스 삭제 완료!\n이름: {source_name}\n위치: {source_location}"
+
+    except Exception as e:
+        db.rollback()
+        return f"❌ 소스 삭제 실패: {str(e)}"
+    finally:
+        db.close()
 
 
 if __name__ == "__main__":

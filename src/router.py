@@ -1,14 +1,20 @@
-from fastapi import APIRouter
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, Form, Request, HTTPException
+from fastapi.responses import StreamingResponse, RedirectResponse
+from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
 import src.controller as controller
 from src.tools import embedding_file
+from storage.database import get_db
 import uuid
 import subprocess
 import shutil
 import os
 
 router = APIRouter()
+
+# Jinja2 템플릿 설정
+templates = Jinja2Templates(directory="templates")
 
 #class
 class QueryReq(BaseModel):
@@ -24,12 +30,130 @@ class GitSyncReq(BaseModel):
     repo_url: str
     branch: str = "main"
 
-#router
+# 로그인 관련 모델
+class LoginRequest(BaseModel):
+    user_id: str
+
+class LoginResponse(BaseModel):
+    user_id: str
+    message: str
+
+class UserInfoResponse(BaseModel):
+    user_id: str
+    sources_count: int
+
+
+@router.get("/")
+async def login_page(request: Request):
+    """로그인 페이지 (HTML Form)"""
+    return templates.TemplateResponse(
+        request=request,
+        name="login.html"
+    )
+
+@router.get("/log-maker")
+async def log_maker_page(request: Request):
+    """Git 동기화 & 일지 생성 UI"""
+    return templates.TemplateResponse(
+        request=request,
+        name="log_maker.html"
+    )
+
+@router.post("/login-form")
+async def login_form(user_id: str = Form(...), db: Session = Depends(get_db)):
+    """
+    Form 방식 로그인 (서버 리다이렉트)
+    - 로그인 후 자동으로 개인 페이지로 이동
+    """
+    result = controller.handle_login(db, user_id)
+    # 로그인 성공 후 개인 페이지로 리다이렉트
+    return RedirectResponse(url=f"/user/{result['user_id']}", status_code=303)
+
+@router.get("/user/{user_id}")
+async def get_user_page(request: Request, user_id: str, db: Session = Depends(get_db)):
+    """
+    개인 페이지 (HTML)
+    - 사용자 정보를 HTML로 표시
+    """
+    result = controller.get_user_info(db, user_id=user_id)
+
+    return templates.TemplateResponse(
+        request=request,
+        name="user_page.html",
+        context={
+            "user_id": result['user_id'],
+            "sources_count": result['sources_count']
+        }
+    )
+
+@router.get("/user/{user_id}/settings")
+async def get_settings_page(request: Request, user_id: str, db: Session = Depends(get_db)):
+    """
+    설정 페이지 (HTML)
+    - 등록된 소스 목록 보기/삭제
+    """
+    from storage.models import Source
+
+    # 사용자 존재 확인
+    controller.get_user_info(db, user_id=user_id)
+
+    # 소스 목록 조회
+    sources = db.query(Source).filter(
+        Source.user_id == user_id,
+        Source.is_active == True
+    ).all()
+
+    return templates.TemplateResponse(
+        request=request,
+        name="settings.html",
+        context={
+            "user_id": user_id,
+            "sources": sources
+        }
+    )
+
+@router.post("/user/{user_id}/delete_source/{source_id}")
+async def delete_source(user_id: str, source_id: int, db: Session = Depends(get_db)):
+    """소스 삭제 API"""
+    from storage.models import Source
+
+    source = db.query(Source).filter(
+        Source.id == source_id,
+        Source.user_id == user_id
+    ).first()
+
+    if not source:
+        raise HTTPException(status_code=404, detail="소스를 찾을 수 없습니다")
+
+    db.delete(source)
+    db.commit()
+
+    return {"success": True, "message": "소스가 삭제되었습니다"}
+
 @router.post("/call_agent")
 async def call_agent(req: QueryReq):
     thread_id = req.thread_id or str(uuid.uuid4())
     res = controller.main(req)
     return res
+
+@router.post("/unified_agent")
+async def unified_agent_endpoint(user_id: str = Form(...), message: str = Form(...)):
+    """
+    통합 Agent (Router 기반)
+    - Router가 요청을 분석하여 적절한 Agent로 자동 라우팅
+    - 소스 관리 + 일지 작성 모두 처리 가능
+    """
+    res = controller.unified_agent(user_id, message)
+    return {"response": res}
+
+@router.post("/source_manager")
+async def source_manager(user_id: str = Form(...), message: str = Form(...)):
+    """
+    소스 관리 대화형 Agent (레거시)
+    - 사용자와 대화하면서 소스 추가/조회/삭제
+    """
+    res = controller.source_manager(user_id, message)
+    return {"response": res}
 
 @router.post("/embed")
 async def embed_documents(req: EmbeddingReq):
