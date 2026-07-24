@@ -16,7 +16,7 @@ wheels/
 # ChromaDB data
 chroma_db
 
-docs/
+docs/aidocs/
 repos
 test_retrieval.py
 test_search.py

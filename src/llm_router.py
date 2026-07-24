@@ -7,35 +7,48 @@ from langchain_google_genai import GoogleGenerativeAIEmbeddings
 import os
 from dotenv import load_dotenv
 load_dotenv()
-#embedding - google
+#embedding - google (AWS 배포용 - 메모리 절약)
 google_embedding = GoogleGenerativeAIEmbeddings(
-    model="models/gemini-embedding-001",
+    model="models/text-embedding-004",  # 최신 임베딩 모델
     google_api_key = os.getenv("GOOGLE_API_KEY")
 )
 
-#llm -google (embedding 으로 인해 임시 제외)
+#llm -google
 google_llm = ChatGoogleGenerativeAI(
     model="gemini-2.5-flash-lite",
     google_api_key = os.getenv("GOOGLE_API_KEY")
 )
+
 #llm -openai oauth(local test)
 codex_llm = ChatCodexOAuth(
     model="gpt-5.4-mini"
 )
-# 임베딩은 local_embedding 사용 (아래에 정의됨)
+
 #llm - anthropic
 anthropic_llm = ChatAnthropic(
     model="claude-sonnet-4-5-20250929",  # 최신 Sonnet 4.5 모델
     anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
 )
 
-#embedding - local (완전 무료 - 제한 없음)
-from langchain_huggingface import HuggingFaceEmbeddings
-local_embedding = HuggingFaceEmbeddings(
-    model_name="jhgan/ko-sroberta-multitask",  # https://huggingface.co/jhgan/ko-sroberta-multitask # 한국어 모델로 변경
-    model_kwargs={'device': 'cpu'},
-    encode_kwargs={'normalize_embeddings': True}
-) #    model_name="sentence-transformers/all-MiniLM-L6-v2",  # 작고 빠른 모델 기존 모델
+# ========== 임베딩 모델 선택 (환경변수로 제어) ==========
+EMBEDDING_MODE = os.getenv("EMBEDDING_MODE", "google")  # "google" 또는 "local"
+
+if EMBEDDING_MODE == "local":
+    # 로컬 임베딩 (개발 환경용 - 메모리 5-6GB 필요)
+    print("[Embedding] 🖥️ 로컬 모델 사용 (메모리: ~6GB)")
+    from langchain_huggingface import HuggingFaceEmbeddings
+    local_embedding = HuggingFaceEmbeddings(
+        model_name="jhgan/ko-sroberta-multitask",
+        model_kwargs={'device': 'cpu'},
+        encode_kwargs={'normalize_embeddings': True}
+    )
+    # 사용할 임베딩
+    embedding_function = local_embedding
+else:
+    # Google API 임베딩 (프로덕션/AWS용 - 메모리 0MB)
+    print("[Embedding] ☁️ Google Gemini API 사용 (메모리: 0MB)")
+    # 사용할 임베딩
+    embedding_function = google_embedding
 
 
 # ChromaDB 클라이언트 설정 (서버 모드)

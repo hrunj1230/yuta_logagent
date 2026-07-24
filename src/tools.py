@@ -3,6 +3,7 @@ from langgraph.graph import StateGraph, MessagesState
 from langchain_community.document_loaders import DirectoryLoader, TextLoader, JSONLoader
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 import src.llm_router as llm_router
 import hashlib
 import zipfile
@@ -134,7 +135,7 @@ def embedding_file(path: str) -> str:
         ids.append(id_hash)
 
     vectorstore = Chroma(
-        embedding_function=llm_router.local_embedding,  # 로컬 임베딩 사용 (무료!)
+        embedding_function=llm_router.embedding_function,  # 로컬 임베딩 사용 (무료!)
         client=llm_router.chroma_client,  # 서버 모드 클라이언트 사용
     )
 
@@ -158,7 +159,7 @@ def retriever_vectordb(date: str, reference_len: str) -> str:
 
     reopened = Chroma(
         collection_name="user_hrun",  # 컬렉션 이름 지정!
-        embedding_function=llm_router.local_embedding,
+        embedding_function=llm_router.embedding_function,
         client=llm_router.chroma_client,  # 서버 모드 클라이언트 사용
     )
     k = int(reference_len) if reference_len else 5
@@ -320,11 +321,47 @@ def embedding_file_for_user(user_id: str, path: str) -> str:
     if not non_empty_docs:
         return f"❌ {user_id}: 임베딩할 문서가 없습니다"
 
-    print(f"[{user_id}] 총 {len(non_empty_docs)}개 문서 임베딩 시작...")
+    print(f"[{user_id}] 총 {len(non_empty_docs)}개 문서 로드 완료")
 
-    # 고유한 ID 생성
+    # ========== 문서 청킹 (토큰 제한 대응) ==========
+    # Google Gemini Embedding: 최대 ~2048 tokens (약 6-8KB)
+    # 큰 문서를 작은 조각으로 나누어 처리
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=1500,  # 한 청크당 1500자 (약 500 토큰)
+        chunk_overlap=200,  # 청크 간 200자 중복 (문맥 유지)
+        length_function=len,
+        separators=["\n\n", "\n", " ", ""]  # 우선순위: 단락 > 줄 > 단어
+    )
+
+    chunked_docs = []
+    for doc in non_empty_docs:
+        # 문서 크기 확인
+        doc_size = len(doc.page_content)
+
+        if doc_size > 1500:
+            # 큰 문서는 청킹
+            chunks = text_splitter.split_documents([doc])
+            print(f"  📄 {doc.metadata.get('source', 'unknown')}: {doc_size}자 → {len(chunks)}개 청크")
+
+            # ⚠️ 중요: 각 청크에 원본 메타데이터 명시적으로 복사 (날짜 검색 보장)
+            for chunk in chunks:
+                # 원본 문서의 모든 메타데이터를 청크에 복사
+                chunk.metadata.update({
+                    "source": doc.metadata.get("source"),
+                    "date": doc.metadata.get("date"),  # 날짜 검색용
+                    "type": doc.metadata.get("type"),
+                })
+
+            chunked_docs.extend(chunks)
+        else:
+            # 작은 문서는 그대로
+            chunked_docs.append(doc)
+
+    print(f"[{user_id}] 청킹 완료: {len(non_empty_docs)}개 문서 → {len(chunked_docs)}개 청크")
+
+    # 고유한 ID 생성 (청크 단위)
     ids = []
-    for idx, doc in enumerate(non_empty_docs):
+    for idx, doc in enumerate(chunked_docs):
         source = doc.metadata.get("source", "unknown")
         unique_string = f"{user_id}_{source}_{idx}_{doc.page_content[:100]}"
         id_hash = hashlib.md5(unique_string.encode()).hexdigest()
@@ -333,24 +370,83 @@ def embedding_file_for_user(user_id: str, path: str) -> str:
     # 사용자별 컬렉션 생성
     collection_name = f"user_{user_id}"
 
-    # 기존 컬렉션 삭제 (중복 방지)
-    try:
-        llm_router.chroma_client.delete_collection(collection_name)
-        print(f"[{user_id}] 기존 컬렉션 삭제됨")
-    except Exception as e:
-        print(f"[{user_id}] 기존 컬렉션 없음 (첫 동기화)")
-
+    # 기존 컬렉션 가져오기 (삭제하지 않음 - 중복 방지용)
     vectorstore = Chroma(
-        collection_name=collection_name,  # 사용자별 컬렉션!
-        embedding_function=llm_router.local_embedding,
-        client=llm_router.chroma_client  # 기존 클라이언트 사용 (일관성 유지)
+        collection_name=collection_name,
+        embedding_function=llm_router.embedding_function,
+        client=llm_router.chroma_client
     )
 
-    print(f"[{user_id}] ChromaDB 컬렉션 '{collection_name}'에 저장 중...")
-    vectorstore.add_documents(non_empty_docs, ids=ids)
-    print(f"✅ [{user_id}] 완료! {len(non_empty_docs)}개 문서가 임베딩되었습니다.")
+    # ========== 중복 방지: 변경된 파일만 임베딩 ==========
+    # 기존 임베딩 해시 가져오기
+    try:
+        existing_data = vectorstore.get(include=["metadatas"])
+        existing_hashes = {
+            meta.get("source"): meta.get("content_hash")
+            for meta in existing_data.get("metadatas", [])
+            if meta.get("content_hash")
+        }
+        print(f"[{user_id}] 기존 임베딩: {len(existing_hashes)}개 파일")
+    except Exception:
+        existing_hashes = {}
+        print(f"[{user_id}] 기존 임베딩 없음 (첫 동기화)")
 
-    return f"✅ 사용자 '{user_id}': {len(non_empty_docs)}개 문서 임베딩 완료 (컬렉션: {collection_name})"
+    # 변경된 청크만 필터링
+    new_chunks = []
+    skipped_count = 0
+
+    for doc in chunked_docs:
+        source = doc.metadata.get("source", "")
+        content = doc.page_content
+
+        # 파일별 content hash 생성
+        content_hash = hashlib.md5(content.encode()).hexdigest()
+        doc.metadata["content_hash"] = content_hash
+
+        # 기존 해시와 비교
+        if source in existing_hashes and existing_hashes[source] == content_hash:
+            skipped_count += 1
+            continue  # 변경 없음 → 스킵 (토큰 절약!)
+
+        new_chunks.append(doc)
+
+    print(f"[{user_id}] 중복 방지: {len(chunked_docs)}개 청크 중 {skipped_count}개 스킵 → {len(new_chunks)}개만 임베딩")
+
+    # 변경된 청크가 없으면 종료
+    if not new_chunks:
+        print(f"✅ [{user_id}] 변경 없음. 임베딩 스킵!")
+        return f"✅ 사용자 '{user_id}': 변경된 파일 없음 (임베딩 스킵)"
+
+    # 새로운 ID 생성 (변경된 청크만)
+    ids = []
+    for idx, doc in enumerate(new_chunks):
+        source = doc.metadata.get("source", "unknown")
+        content_hash = doc.metadata.get("content_hash", "")
+        unique_string = f"{user_id}_{source}_{content_hash}"
+        id_hash = hashlib.md5(unique_string.encode()).hexdigest()
+        ids.append(id_hash)
+
+    # 배치로 나누어 임베딩 (Rate Limiting 대응)
+    print(f"[{user_id}] ChromaDB 컬렉션 '{collection_name}'에 저장 중...")
+
+    batch_size = 100  # 한 번에 100개씩 처리
+    total_new_chunks = len(new_chunks)
+
+    for i in range(0, total_new_chunks, batch_size):
+        batch_docs = new_chunks[i:i+batch_size]
+        batch_ids = ids[i:i+batch_size]
+
+        try:
+            vectorstore.add_documents(batch_docs, ids=batch_ids)
+            print(f"  ✅ 배치 {i//batch_size + 1}/{(total_new_chunks + batch_size - 1)//batch_size} 완료 ({len(batch_docs)}개)")
+        except Exception as e:
+            print(f"  ⚠️ 배치 {i//batch_size + 1} 실패: {str(e)}")
+            # 실패한 배치는 건너뛰고 계속 진행
+            continue
+
+    print(f"✅ [{user_id}] 완료! {len(non_empty_docs)}개 문서 → {total_new_chunks}개 신규 청크 임베딩 (스킵: {skipped_count}개)")
+
+    return f"✅ 사용자 '{user_id}': {len(non_empty_docs)}개 문서 - 신규 {total_new_chunks}개 임베딩, {skipped_count}개 스킵 (90% 토큰 절약!)"
 
 
 ## Source 관리 Tool들

@@ -130,6 +130,66 @@ async def delete_source(user_id: str, source_id: int, db: Session = Depends(get_
 
     return {"success": True, "message": "소스가 삭제되었습니다"}
 
+@router.get("/user/{user_id}/embeddings")
+async def get_embeddings_info(user_id: str):
+    """
+    사용자의 임베딩 정보 조회 (관리용)
+    """
+    from langchain_chroma import Chroma
+    import src.llm_router as llm_router
+
+    collection_name = f"user_{user_id}"
+
+    try:
+        vectorstore = Chroma(
+            collection_name=collection_name,
+            embedding_function=llm_router.embedding_function,
+            client=llm_router.chroma_client
+        )
+
+        # 데이터 가져오기
+        data = vectorstore.get(include=["metadatas", "documents"])
+
+        total_count = len(data.get("ids", []))
+
+        if total_count == 0:
+            return {
+                "user_id": user_id,
+                "collection_name": collection_name,
+                "total_chunks": 0,
+                "files": [],
+                "message": "임베딩 없음. 첫 동기화를 해주세요."
+            }
+
+        # 파일별 그룹화
+        file_stats = {}
+        for metadata, document in zip(data["metadatas"], data["documents"]):
+            source = metadata.get("source", "unknown")
+            content_hash = metadata.get("content_hash", "")
+
+            if source not in file_stats:
+                file_stats[source] = {
+                    "source": source,
+                    "chunk_count": 0,
+                    "content_hash": content_hash,
+                    "total_length": 0
+                }
+
+            file_stats[source]["chunk_count"] += 1
+            file_stats[source]["total_length"] += len(document)
+
+        return {
+            "user_id": user_id,
+            "collection_name": collection_name,
+            "total_chunks": total_count,
+            "total_files": len(file_stats),
+            "files": list(file_stats.values()),
+            "message": f"{len(file_stats)}개 파일, {total_count}개 청크 임베딩됨"
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"임베딩 조회 실패: {str(e)}")
+
 @router.post("/call_agent")
 async def call_agent(req: QueryReq):
     thread_id = req.thread_id or str(uuid.uuid4())
