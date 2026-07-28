@@ -50,6 +50,12 @@ source_management_tools = [
     source_tools.delete_source_from_db,
 ]
 
+# Task 10: Embedding management tools for embedding_agent
+embedding_management_tools = [
+    embedding_tools.embed_source,
+    embedding_tools.get_embedding_status,
+]
+
 
 def create_router_agent(user_id: str):
     """Create router agent that analyzes requests and routes to sub-agents"""
@@ -166,3 +172,64 @@ def create_source_agent(user_id: str):
         return {"messages": [result]}
 
     return source_agent_node
+
+
+def create_embedding_agent(user_id: str):
+    """
+    Task 10: Create embedding management agent using Anthropic Sonnet.
+
+    Handles embedding operations:
+    - embed_source: Start or restart embedding for a source
+    - get_embedding_status: Check embedding status
+
+    Args:
+        user_id: User ID for context and authorization
+
+    Returns:
+        Agent function that processes embedding management requests
+    """
+    # Bind tools to Anthropic Sonnet
+    embedding_agent_llm = llm_router.anthropic_llm.bind_tools(embedding_management_tools)
+
+    def embedding_agent_node(state: UnifiedState) -> dict:
+        """
+        Process embedding management requests.
+
+        Returns:
+            Dictionary with messages field containing agent response
+        """
+        # Get user's message
+        user_message = state["messages"][-1].content
+
+        # Embedding management system message (Korean)
+        embedding_system = SystemMessage(content=f"""당신은 임베딩 실행 전문 에이전트입니다 (user_id: {user_id}).
+
+**주요 책임:**
+임베딩 생명주기 관리:
+1. embed_source - 소스의 임베딩 시작 또는 재시작
+2. get_embedding_status - 임베딩 상태 조회 및 통계 확인
+
+**사용 규칙:**
+- 사용자가 "임베딩 시작해줘"라고 하면: embed_source 사용 (source_id 필수)
+- 사용자가 "임베딩 상태 확인"이라고 하면: get_embedding_status 사용
+- 임베딩 재시작도 embed_source로 처리
+
+**중요:**
+- source_id는 필수입니다. 모르면 사용자에게 물어보세요.
+- 임베딩은 시간이 걸릴 수 있으니 사용자에게 알려주세요.
+- 임베딩 완료 후에는 통계를 사용자에게 제시해주세요.
+""")
+
+        messages = [embedding_system] + state["messages"]
+
+        # Invoke LLM with tools
+        result = embedding_agent_llm.invoke(messages)
+
+        # Debug logging
+        print(f"[EMBEDDING AGENT] Response:")
+        print(f"  - Content: {result.content[:100] if result.content else 'None'}...")
+        print(f"  - Tool calls: {result.tool_calls if hasattr(result, 'tool_calls') else 'None'}")
+
+        return {"messages": [result]}
+
+    return embedding_agent_node
