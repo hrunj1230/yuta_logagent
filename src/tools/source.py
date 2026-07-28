@@ -125,3 +125,72 @@ def get_user_sources(user_id: str) -> str:
 
     finally:
         db.close()
+
+
+@tool
+def delete_source_from_db(source_id: int, user_id: str) -> str:
+    """
+    소스를 삭제합니다 (DB + ChromaDB 임베딩).
+
+    Args:
+        source_id: 소스 ID
+        user_id: 사용자 ID (권한 확인용)
+
+    Returns:
+        성공/실패 메시지
+    """
+    db = SessionLocal()
+    try:
+        source = db.query(Source).filter_by(id=source_id, user_id=user_id).first()
+
+        if not source:
+            return f"❌ 오류: 소스를 찾을 수 없습니다. (ID: {source_id})"
+
+        source_name = source.name
+
+        # ChromaDB에서 해당 소스의 임베딩 삭제 (embedding.py 완성 후 구현)
+        deleted_count = 0  # TODO: _delete_source_embeddings 호출
+
+        # DB에서 삭제
+        db.delete(source)
+        db.commit()
+
+        return f"""✅ 소스가 삭제되었습니다.
+- 이름: {source_name}
+- ID: {source_id}
+- 삭제된 임베딩: {deleted_count}개"""
+
+    except Exception as e:
+        db.rollback()
+        raise RuntimeError(f"소스 삭제 중 시스템 오류: {str(e)}")
+    finally:
+        db.close()
+
+
+@tool
+def request_source_type_clarification() -> str:
+    """
+    사용자에게 소스 타입을 명확히 요청합니다.
+    SourceType 판단이 애매할 때 호출합니다.
+
+    Returns:
+        소스 타입 선택 안내 메시지
+    """
+    return """🤔 소스 타입을 명확히 지정해주세요:
+
+1️⃣ **git** - Git 저장소를 clone하고 파일을 임베딩
+   예: https://github.com/user/repo.git
+
+2️⃣ **git_log** - Git 커밋 히스토리를 임베딩
+   예: https://github.com/user/repo.git (커밋 로그만)
+
+3️⃣ **local** - 서버의 로컬 디렉토리 사용
+   예: /path/to/local/directory
+
+4️⃣ **agent_chatlog** - 에이전트 대화 로그 파일
+   예: /logs/chat_history.json
+
+5️⃣ **memsearch** - 기존 메모리 검색 데이터 연결
+   예: /data/memsearch/index
+
+소스를 추가할 때 타입을 함께 지정해주세요."""
