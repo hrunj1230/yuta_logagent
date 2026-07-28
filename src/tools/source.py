@@ -33,7 +33,7 @@ def add_source_to_db(
     try:
         source_type_enum = SourceType(source_type.lower())
     except ValueError:
-        return f"❌ 오류: 지원하지 않는 소스 타입입니다. (지원: git, git_log, local, agent_chatlog, memsearch)"
+        return request_source_type_clarification.invoke({})
 
     # Git URL 검증
     if source_type_enum in [SourceType.GIT, SourceType.GIT_LOG]:
@@ -178,20 +178,19 @@ def request_source_type_clarification() -> str:
         소스 타입 선택 안내 메시지
     """
     return """🤔 소스 타입을 명확히 지정해주세요:
-
-1️⃣ **git** - Git 저장소를 clone하고 파일을 임베딩
+**git** - Git 저장소를 clone하고 파일을 임베딩
    예: https://github.com/user/repo.git
 
-2️⃣ **git_log** - Git 커밋 히스토리를 임베딩
+**git_log** - Git 커밋 히스토리를 임베딩
    예: https://github.com/user/repo.git (커밋 로그만)
 
-3️⃣ **local** - 서버의 로컬 디렉토리 사용
+**local** - 서버의 로컬 디렉토리 사용
    예: /path/to/local/directory
 
-4️⃣ **agent_chatlog** - 에이전트 대화 로그 파일
+**agent_chatlog** - 에이전트 대화 로그 파일
    예: /logs/chat_history.json
 
-5️⃣ **memsearch** - 기존 메모리 검색 데이터 연결
-   예: /data/memsearch/index
+**memsearch** - 기존 메모리 검색 데이터 연결
+   예: /.memsearch
 
 소스를 추가할 때 타입을 함께 지정해주세요."""
