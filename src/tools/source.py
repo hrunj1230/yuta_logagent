@@ -78,3 +78,50 @@ def add_source_to_db(
         raise RuntimeError(f"소스 추가 중 시스템 오류: {str(e)}")
     finally:
         db.close()
+
+
+@tool
+def get_user_sources(user_id: str) -> str:
+    """
+    사용자의 모든 소스 목록을 조회합니다.
+
+    Args:
+        user_id: 사용자 ID
+
+    Returns:
+        소스 목록 (포맷팅된 문자열)
+    """
+    db = SessionLocal()
+    try:
+        sources = db.query(Source).filter_by(user_id=user_id, is_active=True).all()
+
+        if not sources:
+            return "📭 등록된 소스가 없습니다."
+
+        result = f"📚 총 {len(sources)}개의 소스가 등록되어 있습니다:\n\n"
+
+        for src in sources:
+            status_emoji = {
+                EmbeddingStatus.PENDING: "⏳",
+                EmbeddingStatus.IN_PROGRESS: "🔄",
+                EmbeddingStatus.COMPLETED: "✅",
+                EmbeddingStatus.FAILED: "❌"
+            }.get(src.embedding_status, "❓")
+
+            result += f"{status_emoji} [{src.id}] {src.name}\n"
+            result += f"   타입: {src.type.value}\n"
+            result += f"   위치: {src.location}\n"
+            result += f"   상태: {src.embedding_status.value}\n"
+
+            if src.last_synced_at:
+                result += f"   마지막 동기화: {src.last_synced_at.strftime('%Y-%m-%d %H:%M')}\n"
+
+            if src.embedding_status == EmbeddingStatus.FAILED and src.embedding_error:
+                result += f"   ⚠️ 오류: {src.embedding_error}\n"
+
+            result += "\n"
+
+        return result.strip()
+
+    finally:
+        db.close()
