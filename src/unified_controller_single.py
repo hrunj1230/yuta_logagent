@@ -1,15 +1,14 @@
 """
-Unified Source Management Agent (Single Agent Approach)
+통합 소스 관리 Agent (단일 Agent 방식)
 
-This module provides a single LangGraph agent that handles all source and
-embedding management operations. The agent automatically chains operations
-(e.g., add_source_to_db → embed_source) and maintains conversation history
-per user via InMemorySaver checkpointer.
+이 모듈은 모든 소스 및 임베딩 관리 작업을 처리하는 단일 LangGraph Agent를 제공합니다.
+Agent는 작업을 자동으로 연쇄 호출하고 (예: add_source_to_db → embed_source),
+InMemorySaver checkpointer를 통해 사용자별 대화 기록을 유지합니다.
 
-Public API:
+공개 API:
     unified_agent(user_id: str, message: str) -> str
 
-Tools Used:
+사용 도구:
     - add_source_to_db
     - get_user_sources
     - delete_source_from_db
@@ -27,10 +26,10 @@ from .tools import source as source_tools
 from .tools import embedding as embedding_tools
 
 
-# Checkpointer for conversation history
+# 대화 기록 유지를 위한 Checkpointer
 checkpointer = InMemorySaver()
 
-# All 6 source management tools
+# 6개의 소스 및 임베딩 관리 도구
 unified_tools = [
     source_tools.add_source_to_db,
     source_tools.get_user_sources,
@@ -40,12 +39,12 @@ unified_tools = [
     embedding_tools.get_embedding_status
 ]
 
-# Gemini Flash for single agent (fast, supports tool calling)
+# 단일 Agent용 Gemini Flash (빠르고 도구 호출 지원)
 llm_with_tools = llm_router.google_llm.bind_tools(unified_tools)
 
 
 def create_system_message(user_id: str) -> SystemMessage:
-    """Generate system message with user_id context"""
+    """user_id 컨텍스트가 포함된 시스템 메시지 생성"""
     return SystemMessage(content=f"""당신은 소스 관리 어시스턴트입니다 (user_id: {user_id}).
 
 주요 기능:
@@ -69,16 +68,16 @@ def create_system_message(user_id: str) -> SystemMessage:
 
 
 def create_unified_agent(user_id: str):
-    """Create agent function with user_id in system message"""
+    """시스템 메시지에 user_id가 포함된 Agent 함수 생성"""
     def unified_agent_node(state: MessagesState) -> dict:
-        """Unified agent that handles all source/embedding operations"""
+        """모든 소스/임베딩 작업을 처리하는 통합 Agent"""
         system_message = create_system_message(user_id)
         messages = [system_message] + state["messages"]
 
-        # Invoke LLM with tools
+        # 도구가 바인딩된 LLM 호출
         result = llm_with_tools.invoke(messages)
 
-        # Debug logging
+        # 디버그 로깅
         print(f"[UNIFIED AGENT] Response:")
         print(f"  - Content: {result.content[:100] if result.content else 'None'}...")
         print(f"  - Tool calls: {result.tool_calls if hasattr(result, 'tool_calls') else 'None'}")
@@ -89,18 +88,18 @@ def create_unified_agent(user_id: str):
 
 
 def _build_graph(user_id: str):
-    """Build LangGraph for single unified agent"""
+    """단일 통합 Agent를 위한 LangGraph 구성"""
     builder = StateGraph(MessagesState)
 
-    # Create agent and tool nodes
+    # Agent 및 도구 노드 생성
     unified_agent_node = create_unified_agent(user_id)
     tool_node = ToolNode(tools=unified_tools)
 
-    # Add nodes
+    # 노드 추가
     builder.add_node("agent", unified_agent_node)
     builder.add_node("tools", tool_node)
 
-    # Add edges
+    # 엣지 추가
     builder.add_edge(START, "agent")
     builder.add_conditional_edges(
         "agent",
@@ -112,37 +111,37 @@ def _build_graph(user_id: str):
     )
     builder.add_edge("tools", "agent")
 
-    # Compile with checkpointer
+    # Checkpointer와 함께 컴파일
     return builder.compile(checkpointer=checkpointer)
 
 
 def unified_agent(user_id: str, message: str) -> str:
     """
-    Unified source management agent entry point.
+    통합 소스 관리 Agent 진입점.
 
-    Handles all source and embedding operations with conversation history.
-    Automatically chains add_source_to_db → embed_source for Git URLs.
+    대화 기록을 유지하면서 모든 소스 및 임베딩 작업을 처리합니다.
+    Git URL의 경우 add_source_to_db → embed_source를 자동으로 연쇄 호출합니다.
 
     Args:
-        user_id: User ID (used as thread_id for conversation persistence)
-        message: User message
+        user_id: 사용자 ID (대화 지속성을 위한 thread_id로 사용됨)
+        message: 사용자 메시지
 
     Returns:
-        Agent response string
+        Agent 응답 문자열
     """
-    # Build graph for this user
+    # 사용자별 그래프 구성
     graph = _build_graph(user_id)
 
-    # Configure with thread_id for conversation history
+    # 대화 기록 유지를 위한 thread_id 설정
     config = {"configurable": {"thread_id": user_id}}
 
-    # Prepare input
+    # 입력 준비
     input_dict = {
         "messages": [HumanMessage(content=message)]
     }
 
-    # Invoke graph
+    # 그래프 실행
     result = graph.invoke(input_dict, config=config)
 
-    # Return last message content
+    # 마지막 메시지 내용 반환
     return result["messages"][-1].content if result.get("messages") else ""
