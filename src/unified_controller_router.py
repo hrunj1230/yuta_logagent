@@ -8,7 +8,8 @@ Router가 사용자 요청을 분석하여 적절한 전문 Agent에게 작업�
     unified_agent(user_id: str, message: str) -> str
 """
 
-from typing import Annotated, Literal, TypedDict
+from typing import Annotated, Literal
+from typing_extensions import TypedDict
 from pydantic import BaseModel, Field
 from langchain_core.messages import SystemMessage, HumanMessage
 from langgraph.graph import StateGraph, START, END, add_messages
@@ -62,8 +63,8 @@ embedding_management_tools = [
 def create_router_agent(user_id: str):
     """요청을 분석하여 Sub-Agent로 라우팅하는 Router Agent 생성"""
 
-    # 라우팅용 Gemini Flash (구조화된 출력)
-    router_llm = llm_router.google_llm.with_structured_output(RouteDecision)
+    # 라우팅용 Anthropic Claude (구조화된 출력)
+    router_llm = llm_router.anthropic_llm.with_structured_output(RouteDecision)
 
     def router_node(state: UnifiedState) -> dict:
         """
@@ -134,8 +135,8 @@ def create_source_agent(user_id: str):
     Returns:
         소스 및 로그 관리 요청을 처리하는 Agent 함수
     """
-    # Gemini Flash에 도구 바인딩
-    source_agent_llm = llm_router.google_llm.bind_tools(source_management_tools)
+    # Anthropic Claude에 도구 바인딩
+    source_agent_llm = llm_router.anthropic_llm.bind_tools(source_management_tools)
 
     def source_agent_node(state: UnifiedState) -> dict:
         """
@@ -324,7 +325,7 @@ def _build_graph(user_id: str):
         "source_agent",
         tools_condition,
         {
-            "source_tools": "source_tools",
+            "tools": "source_tools",
             "__end__": END,
         },
     )
@@ -334,7 +335,7 @@ def _build_graph(user_id: str):
         "embedding_agent",
         tools_condition,
         {
-            "embedding_tools": "embedding_tools",
+            "tools": "embedding_tools",
             "__end__": END,
         },
     )

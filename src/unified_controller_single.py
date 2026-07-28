@@ -18,16 +18,51 @@ InMemorySaver checkpointer를 통해 사용자별 대화 기록을 유지합니�
     - retriever_vectordb
     - maker_logfile
 """
-from typing import Annotated
-from langchain_core.messages import SystemMessage, HumanMessage
-from langgraph.graph import MessagesState, StateGraph, START, END
+from langchain_core.messages import SystemMessage, HumanMessage, AnyMessage
+from langgraph.graph import StateGraph, START, END, add_messages
 from langgraph.prebuilt import ToolNode, tools_condition
 from langgraph.checkpoint.memory import InMemorySaver
 from . import llm_router
 from .tools import source as source_tools
 from .tools import embedding as embedding_tools
 from .tools import log as log_tools
+from fastapi import FastAPI, HTTPException
+from sqlalchemy.orm import Session
+from .storage.auth import login_or_register, get_user_by_id
+from typing import Literal, TypedDict, Annotated
 
+
+# 단일 Agent용 State 정의 (Pyright 타입 검사 호환성)
+class SingleAgentState(TypedDict):
+    """단일 통합 Agent용 State"""
+    messages: Annotated[list[AnyMessage], add_messages]
+
+
+def handle_login(db: Session, user_id: str):
+    """로그인/회원가입 처리"""
+    if not user_id or not user_id.strip():
+        raise HTTPException(status_code=400, detail="id를 입력해주세요")
+
+    user = login_or_register(db, user_id.strip())
+    return {
+        "user_id": user.user_id,
+        "message": f"{user.user_id}님, 환영합니다!"
+    }
+
+def get_user_info(db: Session, user_id: str | None = None):
+    """사용자 정보 조회"""
+    if not user_id:
+        raise HTTPException(status_code=400, detail="user_id를 제공해주세요")
+
+    user = get_user_by_id(db, user_id)
+
+    if not user:
+        raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다")
+
+    return {
+        "user_id": user.user_id,
+        "sources_count": len(user.sources) if user.sources else 0
+    }
 
 # 대화 기록 유지를 위한 Checkpointer
 checkpointer = InMemorySaver()
@@ -44,8 +79,8 @@ unified_tools = [
     log_tools.maker_logfile
 ]
 
-# 단일 Agent용 Gemini Flash (빠르고 도구 호출 지원)
-llm_with_tools = llm_router.google_llm.bind_tools(unified_tools)
+# 단일 Agent용 Anthropic Claude (안정적이고 도구 호출 지원)
+llm_with_tools = llm_router.anthropic_llm.bind_tools(unified_tools)
 
 
 def create_system_message(user_id: str) -> SystemMessage:
@@ -79,7 +114,7 @@ def create_system_message(user_id: str) -> SystemMessage:
 
 def create_unified_agent(user_id: str):
     """시스템 메시지에 user_id가 포함된 Agent 함수 생성"""
-    def unified_agent_node(state: MessagesState) -> dict:
+    def unified_agent_node(state: SingleAgentState) -> dict:
         """모든 소스/임베딩 작업을 처리하는 통합 Agent"""
         system_message = create_system_message(user_id)
         messages = [system_message] + state["messages"]
@@ -99,7 +134,7 @@ def create_unified_agent(user_id: str):
 
 def _build_graph(user_id: str):
     """단일 통합 Agent를 위한 LangGraph 구성"""
-    builder = StateGraph(MessagesState)
+    builder = StateGraph(SingleAgentState)
 
     # Agent 및 도구 노드 생성
     unified_agent_node = create_unified_agent(user_id)
@@ -109,7 +144,7 @@ def _build_graph(user_id: str):
     builder.add_node("agent", unified_agent_node)
     builder.add_node("tools", tool_node)
 
-    # 엣지 추가
+    # 엣지 추가 
     builder.add_edge(START, "agent")
     builder.add_conditional_edges(
         "agent",
