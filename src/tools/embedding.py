@@ -4,7 +4,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
 from ..storage.database import SessionLocal
 from ..storage.models import Source, SourceType, EmbeddingStatus
-from ..llm_router import google_embedding
+from ..llm_router import local_embedding
 import os
 import hashlib
 import subprocess
@@ -27,7 +27,7 @@ def _get_chroma_collection(user_id: str):
 
     vectorstore = Chroma(
         collection_name=collection_name,
-        embedding_function=google_embedding,
+        embedding_function=local_embedding,
         persist_directory=str(CHROMA_DIR)
     )
 
@@ -43,7 +43,7 @@ def _save_to_chromadb(chunks: list[Document], user_id: str):
 
     Chroma.from_documents(
         documents=chunks,
-        embedding=google_embedding,
+        embedding=local_embedding,
         collection_name=collection_name,
         persist_directory=str(CHROMA_DIR)
     )
