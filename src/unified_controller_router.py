@@ -233,3 +233,136 @@ def create_embedding_agent(user_id: str):
         return {"messages": [result]}
 
     return embedding_agent_node
+
+
+def route_to_agent(state: UnifiedState) -> Literal["source_agent", "embedding_agent"]:
+    """
+    Task 11: Conditional edge function that routes based on route_destination.
+
+    Determines which agent should handle the request based on the router's decision.
+
+    Args:
+        state: Current state containing route_destination
+
+    Returns:
+        Agent name ("source_agent" or "embedding_agent")
+    """
+    destination = state["route_destination"]
+    print(f"[ROUTING] Routing to: {destination}")
+
+    if destination == "source_management":
+        return "source_agent"
+    else:
+        return "embedding_agent"
+
+
+def _build_graph(user_id: str):
+    """
+    Task 11: Build complete LangGraph with router architecture.
+
+    Creates graph with:
+    - router node (analyzes request and decides destination)
+    - source_agent node (handles source management)
+    - embedding_agent node (handles embedding execution)
+    - tools nodes for both agents
+    - conditional edges based on routing decision
+    - tool condition edges for agent tool loops
+
+    Args:
+        user_id: User ID for context and authorization
+
+    Returns:
+        Compiled LangGraph with checkpointer
+    """
+    builder = StateGraph(UnifiedState)
+
+    # Create all agent nodes
+    router_node = create_router_agent(user_id)
+    source_agent_node = create_source_agent(user_id)
+    embedding_agent_node = create_embedding_agent(user_id)
+
+    # Create tool nodes for both agents
+    source_tool_node = ToolNode(tools=source_management_tools)
+    embedding_tool_node = ToolNode(tools=embedding_management_tools)
+
+    # Add all nodes to graph
+    builder.add_node("router", router_node)
+    builder.add_node("source_agent", source_agent_node)
+    builder.add_node("embedding_agent", embedding_agent_node)
+    builder.add_node("source_tools", source_tool_node)
+    builder.add_node("embedding_tools", embedding_tool_node)
+
+    # Add edges
+    # Start → router
+    builder.add_edge(START, "router")
+
+    # Router → source_agent or embedding_agent based on route_to_agent
+    builder.add_conditional_edges(
+        "router",
+        route_to_agent,
+        {
+            "source_agent": "source_agent",
+            "embedding_agent": "embedding_agent",
+        },
+    )
+
+    # source_agent → source_tools or END based on tool_condition
+    builder.add_conditional_edges(
+        "source_agent",
+        tools_condition,
+        {
+            "source_tools": "source_tools",
+            "__end__": END,
+        },
+    )
+
+    # embedding_agent → embedding_tools or END based on tool_condition
+    builder.add_conditional_edges(
+        "embedding_agent",
+        tools_condition,
+        {
+            "embedding_tools": "embedding_tools",
+            "__end__": END,
+        },
+    )
+
+    # Tool loops back to agents
+    builder.add_edge("source_tools", "source_agent")
+    builder.add_edge("embedding_tools", "embedding_agent")
+
+    # Compile with checkpointer
+    return builder.compile(checkpointer=checkpointer)
+
+
+def unified_agent(user_id: str, message: str) -> str:
+    """
+    Task 12: Unified source management agent entry point.
+
+    Public API that handles all source and embedding operations with routing.
+    Uses router to determine whether to use source_agent or embedding_agent.
+    Maintains conversation history per user via checkpointer.
+
+    Args:
+        user_id: User ID (used as thread_id for conversation persistence)
+        message: User message
+
+    Returns:
+        Agent response string
+    """
+    # Build graph for this user
+    graph = _build_graph(user_id)
+
+    # Configure with thread_id for conversation history
+    config = {"configurable": {"thread_id": user_id}}
+
+    # Prepare input with initial route_destination field
+    input_dict = {
+        "messages": [HumanMessage(content=message)],
+        "route_destination": "",
+    }
+
+    # Invoke graph
+    result = graph.invoke(input_dict, config=config)
+
+    # Return last message content
+    return result["messages"][-1].content if result.get("messages") else ""
