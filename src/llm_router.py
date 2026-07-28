@@ -19,7 +19,6 @@ local_embedding = HuggingFaceEmbeddings(
 
 # ChromaDB 클라이언트 설정 (서버 모드)
 import chromadb
-from chromadb.config import Settings
 
 CHROMADB_HOST = os.getenv("CHROMADB_HOST", "localhost")
 CHROMADB_PORT = int(os.getenv("CHROMADB_PORT", "8001"))
