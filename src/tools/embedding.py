@@ -124,3 +124,64 @@ def _filter_new_documents(documents: list[Document], user_id: str, source_id: in
             skipped += 1
 
     return new_docs, skipped
+
+
+def _collect_git_files(source: Source, user_id: str) -> list[Document]:
+    """Git 저장소를 clone하고 텍스트 파일 수집"""
+    repo_dir = DATA_DIR / user_id / source.name
+
+    # Clone 또는 Pull
+    if repo_dir.exists():
+        # Git pull
+        result = subprocess.run(
+            ["git", "-C", str(repo_dir), "pull"],
+            capture_output=True,
+            text=True
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"Git pull 실패: {result.stderr}")
+    else:
+        # Git clone
+        repo_dir.parent.mkdir(parents=True, exist_ok=True)
+        result = subprocess.run(
+            ["git", "clone", source.location, str(repo_dir)],
+            capture_output=True,
+            text=True
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"Git clone 실패: {result.stderr}")
+
+    # 텍스트 파일 수집
+    documents = []
+
+    for file_path in repo_dir.rglob("*"):
+        if file_path.is_file() and file_path.suffix in TEXT_EXTENSIONS:
+            try:
+                with open(file_path, "r", encoding="utf-8") as f:
+                    content = f.read()
+
+                # 파일 해시 계산
+                file_hash = hashlib.sha256(content.encode()).hexdigest()
+
+                # 상대 경로
+                rel_path = file_path.relative_to(repo_dir)
+
+                doc = Document(
+                    page_content=content,
+                    metadata={
+                        "user_id": user_id,
+                        "source_id": source.id,
+                        "source_type": source.type.value,
+                        "source_name": source.name,
+                        "file_path": str(rel_path),
+                        "file_hash": file_hash,
+                        "embedded_at": datetime.now().isoformat()
+                    }
+                )
+                documents.append(doc)
+
+            except Exception as e:
+                print(f"파일 읽기 실패 {file_path}: {e}")
+                continue
+
+    return documents
