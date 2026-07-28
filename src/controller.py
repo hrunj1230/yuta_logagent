@@ -3,12 +3,12 @@ from fastapi import FastAPI, HTTPException
 from sqlalchemy.orm import Session
 from typing import Literal, TypedDict, Annotated
 from pydantic import BaseModel, Field
-import src.llm_router as llm
+from . import llm_router
 from langgraph.graph import MessagesState, StateGraph, START, END, add_messages
 from langgraph.prebuilt import ToolNode, tools_condition
 from langchain_core.messages import SystemMessage,HumanMessage,AIMessage
-import src.tools as tool
-from storage.auth import login_or_register, get_user_by_id
+from . import tools as tool
+from .storage.auth import login_or_register, get_user_by_id
 
 # 커스텀 State: route_destination 필드 추가
 class UnifiedState(TypedDict):
@@ -18,10 +18,7 @@ class UnifiedState(TypedDict):
 
 tools = [ tool.retriever_vectordb , tool.embedding_file, tool.maker_logfile]
 
-# Claude Sonnet 4.5 사용 - 최고 성능 + 안정적인 tool calling
-llm_with_tools = llm.anthropic_llm.bind_tools(tools)
-# llm_with_tools = llm.google_llm.bind_tools(tools)  # Gemini 쿼터 초과
-# llm_with_tools = llm.codex_llm.bind_tools(tools)  # Codex는 tool calling 문제 있음
+llm_with_tools = llm_router.anthropic_llm.bind_tools(tools)
 
 SYSTEM_MESSAGE = SystemMessage(content=
 """당신은 개발자 일지 자동 생성 어시스턴트입니다.
@@ -143,7 +140,7 @@ source_tools = [
 ]
 
 # 소스 관리 전용 LLM (간단한 CRUD → Gemini Flash, tool calling 지원)
-llm_source_manager = llm.google_llm.bind_tools(source_tools)
+llm_source_manager = llm_router.google_llm.bind_tools(source_tools)
 
 def create_source_system_message(user_id: str) -> SystemMessage:
     """사용자 ID를 포함한 SYSTEM_MESSAGE 생성"""
@@ -216,7 +213,7 @@ def create_source_agent(user_id: str):
             print(f"[SOURCE AGENT] 🔍 Git URL 감지! 도구 강제 호출 모드")
 
             # tool_choice로 add_source_to_db 강제 (Gemini Flash - tool calling 지원)
-            llm_forced = llm.google_llm.bind_tools(
+            llm_forced = llm_router.google_llm.bind_tools(
                 source_tools,
                 tool_choice="add_source_to_db"  # 이 도구를 반드시 호출
             )
@@ -298,7 +295,7 @@ def create_router_agent(user_id: str):
 
     # Structured Output을 사용하여 명확한 라우팅 결과 얻기
     # 단순 분류 작업 → Gemini Flash (structured output + tool calling 지원)
-    router_llm = llm.google_llm.with_structured_output(RouteDecision)
+    router_llm = llm_router.google_llm.with_structured_output(RouteDecision)
 
     def router_node(state: UnifiedState) -> dict:
         """

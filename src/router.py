@@ -3,9 +3,9 @@ from fastapi.responses import StreamingResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
-import src.controller as controller
-from src.tools import embedding_file
-from storage.database import get_db
+from . import controller
+from .tools import embedding_file
+from .storage.database import get_db
 import uuid
 import subprocess
 import shutil
@@ -16,7 +16,7 @@ router = APIRouter()
 # Jinja2 템플릿 설정
 templates = Jinja2Templates(directory="templates")
 
-#class
+
 class QueryReq(BaseModel):
     req: str
     thread_id: str
@@ -42,7 +42,7 @@ class UserInfoResponse(BaseModel):
     user_id: str
     sources_count: int
 
-
+#user-router
 @router.get("/")
 async def login_page(request: Request):
     """로그인 페이지 (HTML Form)"""
@@ -130,6 +130,7 @@ async def delete_source(user_id: str, source_id: int, db: Session = Depends(get_
 
     return {"success": True, "message": "소스가 삭제되었습니다"}
 
+#agent-router
 @router.post("/call_agent")
 async def call_agent(req: QueryReq):
     thread_id = req.thread_id or str(uuid.uuid4())
@@ -194,7 +195,7 @@ async def sync_git_repo(req: GitSyncReq):
         print(f"[Git Sync] Clone 완료!")
 
         # 임베딩 (사용자별 컬렉션)
-        from src.tools import embedding_file_for_user
+        from tools import embedding_file_for_user
         embedding_result = embedding_file_for_user(req.user_id, user_dir)
 
         return {

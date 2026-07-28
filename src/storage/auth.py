@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from storage.models import User
+from .models import User
 from typing import Optional
 
 def get_user_by_id(db: Session, user_id: str) -> Optional[User]:

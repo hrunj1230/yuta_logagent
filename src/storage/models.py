@@ -9,7 +9,7 @@ class Base(DeclarativeBase):
 
 class SourceType(str, enum.Enum):
     GIT = "git"
-    LOCAL_TIL = "local_til"
+    LOCAL = "local"
     AGENT_CHATLOG = "agent_chatlog"
     MEMSEARCH = "memsearch"
 
