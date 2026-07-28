@@ -68,3 +68,59 @@ def _delete_source_embeddings(user_id: str, source_id: int) -> int:
     except Exception as e:
         print(f"ChromaDB 삭제 중 오류: {e}")
         return 0
+
+
+def _split_documents(documents: list[Document]) -> list[Document]:
+    """문서를 청크로 분할"""
+    if not documents:
+        return []
+
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=CHUNK_SIZE,
+        chunk_overlap=CHUNK_OVERLAP
+    )
+
+    chunks = []
+    for doc in documents:
+        doc_chunks = splitter.split_documents([doc])
+
+        # 청크 인덱스 추가
+        for idx, chunk in enumerate(doc_chunks):
+            chunk.metadata["chunk_index"] = idx
+            chunks.append(chunk)
+
+    return chunks
+
+
+def _filter_new_documents(documents: list[Document], user_id: str, source_id: int) -> tuple[list[Document], int]:
+    """기존 임베딩과 비교하여 새 문서만 반환"""
+    try:
+        collection = _get_chroma_collection(user_id)
+
+        # 기존 해시 목록 가져오기
+        results = collection.get(
+            where={"source_id": source_id},
+            include=["metadatas"]
+        )
+        existing_hashes = set()
+        for metadata in results.get("metadatas", []):
+            if "file_hash" in metadata:
+                existing_hashes.add(metadata["file_hash"])
+            elif "commit_sha" in metadata:
+                existing_hashes.add(metadata["commit_sha"])
+    except Exception as e:
+        print(f"기존 임베딩 조회 중 오류 (새 Collection 생성): {e}")
+        existing_hashes = set()
+
+    # 새 문서 필터링
+    new_docs = []
+    skipped = 0
+
+    for doc in documents:
+        doc_hash = doc.metadata.get("file_hash") or doc.metadata.get("commit_sha")
+        if doc_hash not in existing_hashes:
+            new_docs.append(doc)
+        else:
+            skipped += 1
+
+    return new_docs, skipped
