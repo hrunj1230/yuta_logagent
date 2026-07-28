@@ -1,3 +1,22 @@
+"""
+Unified Source Management Agent (Single Agent Approach)
+
+This module provides a single LangGraph agent that handles all source and
+embedding management operations. The agent automatically chains operations
+(e.g., add_source_to_db → embed_source) and maintains conversation history
+per user via InMemorySaver checkpointer.
+
+Public API:
+    unified_agent(user_id: str, message: str) -> str
+
+Tools Used:
+    - add_source_to_db
+    - get_user_sources
+    - delete_source_from_db
+    - request_source_type_clarification
+    - embed_source
+    - get_embedding_status
+"""
 from typing import Annotated
 from langchain_core.messages import SystemMessage, HumanMessage
 from langgraph.graph import MessagesState, StateGraph, START, END
@@ -95,3 +114,35 @@ def _build_graph(user_id: str):
 
     # Compile with checkpointer
     return builder.compile(checkpointer=checkpointer)
+
+
+def unified_agent(user_id: str, message: str) -> str:
+    """
+    Unified source management agent entry point.
+
+    Handles all source and embedding operations with conversation history.
+    Automatically chains add_source_to_db → embed_source for Git URLs.
+
+    Args:
+        user_id: User ID (used as thread_id for conversation persistence)
+        message: User message
+
+    Returns:
+        Agent response string
+    """
+    # Build graph for this user
+    graph = _build_graph(user_id)
+
+    # Configure with thread_id for conversation history
+    config = {"configurable": {"thread_id": user_id}}
+
+    # Prepare input
+    input_dict = {
+        "messages": [HumanMessage(content=message)]
+    }
+
+    # Invoke graph
+    result = graph.invoke(input_dict, config=config)
+
+    # Return last message content
+    return result["messages"][-1].content if result.get("messages") else ""
