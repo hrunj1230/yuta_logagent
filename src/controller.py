@@ -8,6 +8,8 @@ from langgraph.graph import MessagesState, StateGraph, START, END, add_messages
 from langgraph.prebuilt import ToolNode, tools_condition
 from langchain_core.messages import SystemMessage,HumanMessage,AIMessage
 from . import tools as tool
+from .tools import source as source_tools
+from .tools import embedding as embedding_tools
 from .storage.auth import login_or_register, get_user_by_id
 
 # 커스텀 State: route_destination 필드 추가
@@ -132,15 +134,17 @@ def main(req):
 ## ========== 소스 관리 Agent ==========
 
 # 소스 관리 도구
-source_tools = [
-    tool.add_source_to_db,
-    tool.get_user_sources,
-    tool.delete_source_from_db
-    # embedding_file_for_user는 add_source_to_db 내부에서 사용하는 헬퍼 함수
+source_management_tools = [
+    source_tools.add_source_to_db,
+    source_tools.get_user_sources,
+    source_tools.delete_source_from_db,
+    source_tools.request_source_type_clarification,
+    embedding_tools.embed_source,
+    embedding_tools.get_embedding_status
 ]
 
 # 소스 관리 전용 LLM (간단한 CRUD → Gemini Flash, tool calling 지원)
-llm_source_manager = llm_router.google_llm.bind_tools(source_tools)
+llm_source_manager = llm_router.google_llm.bind_tools(source_management_tools)
 
 def create_source_system_message(user_id: str) -> SystemMessage:
     """사용자 ID를 포함한 SYSTEM_MESSAGE 생성"""
@@ -235,7 +239,7 @@ def create_source_agent(user_id: str):
 def _source_graph_builder(user_id: str):
     """소스 관리 Graph"""
     builder = StateGraph(MessagesState)
-    tool_node = ToolNode(tools=source_tools)
+    tool_node = ToolNode(tools=source_management_tools)
 
     # 사용자 ID를 포함한 Agent 생성
     source_agent = create_source_agent(user_id)
@@ -386,7 +390,7 @@ def _unified_graph_builder(user_id: str):
 
     # Source Management Subgraph (기존 source_graph를 node로 추가)
     source_agent_func = create_source_agent(user_id)
-    source_tool_node = ToolNode(tools=source_tools)
+    source_tool_node = ToolNode(tools=source_management_tools)
 
     builder.add_node("source_agent", source_agent_func)
     builder.add_node("source_tools", source_tool_node)
