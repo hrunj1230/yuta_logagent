@@ -42,6 +42,15 @@ class RouteDecision(BaseModel):
     )
 
 
+# Task 9: Source management tools for source_agent
+source_management_tools = [
+    source_tools.add_source_and_embed,
+    source_tools.add_source_to_db,
+    source_tools.get_user_sources,
+    source_tools.delete_source_from_db,
+]
+
+
 def create_router_agent(user_id: str):
     """Create router agent that analyzes requests and routes to sub-agents"""
 
@@ -93,3 +102,67 @@ def create_router_agent(user_id: str):
         return {"route_destination": decision.destination}
 
     return router_node
+
+
+def create_source_agent(user_id: str):
+    """
+    Task 9: Create source management agent using Gemini Flash.
+
+    Handles CRUD operations on sources:
+    - add_source_and_embed: Add source and start embedding
+    - add_source_to_db: Add source only
+    - get_user_sources: List all sources
+    - delete_source_from_db: Delete a source
+
+    Args:
+        user_id: User ID for context and authorization
+
+    Returns:
+        Agent function that processes source management requests
+    """
+    # Bind tools to Gemini Flash
+    source_agent_llm = llm_router.google_llm.bind_tools(source_management_tools)
+
+    def source_agent_node(state: UnifiedState) -> dict:
+        """
+        Process source management requests.
+
+        Returns:
+            Dictionary with messages field containing agent response
+        """
+        # Get user's message
+        user_message = state["messages"][-1].content
+
+        # Source management system message (Korean)
+        source_system = SystemMessage(content=f"""당신은 소스 관리 전문 에이전트입니다 (user_id: {user_id}).
+
+**주요 책임:**
+소스 생명주기 관리 (CRUD):
+1. add_source_and_embed - Git 저장소 추가 후 즉시 임베딩 시작
+2. add_source_to_db - 소스만 등록 (임베딩 미포함)
+3. get_user_sources - 등록된 모든 소스 목록 조회
+4. delete_source_from_db - 소스 및 관련 임베딩 삭제
+
+**사용 규칙:**
+- 사용자가 Git URL을 추가하고 "임베딩도 해줘"라고 하면: add_source_and_embed 사용
+- Git URL을 추가하되 수동으로 임베딩하고 싶다면: add_source_to_db만 사용
+- 소스 목록을 보고 싶다면: get_user_sources 사용
+- 소스를 제거하려면: delete_source_from_db 사용
+
+**항상 사용자가 제공한 정보를 먼저 요청하세요:**
+- 소스 이름, 타입, 위치 등이 부족하면 물어봐주세요.
+""")
+
+        messages = [source_system] + state["messages"]
+
+        # Invoke LLM with tools
+        result = source_agent_llm.invoke(messages)
+
+        # Debug logging
+        print(f"[SOURCE AGENT] Response:")
+        print(f"  - Content: {result.content[:100] if result.content else 'None'}...")
+        print(f"  - Tool calls: {result.tool_calls if hasattr(result, 'tool_calls') else 'None'}")
+
+        return {"messages": [result]}
+
+    return source_agent_node
