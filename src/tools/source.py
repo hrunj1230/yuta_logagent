@@ -148,8 +148,9 @@ def delete_source_from_db(source_id: int, user_id: str) -> str:
 
         source_name = source.name
 
-        # ChromaDB에서 해당 소스의 임베딩 삭제 (embedding.py 완성 후 구현)
-        deleted_count = 0  # TODO: _delete_source_embeddings 호출
+        # ChromaDB에서 해당 소스의 임베딩 삭제
+        from .embedding import _delete_source_embeddings
+        deleted_count = _delete_source_embeddings(user_id, source_id)
 
         # DB에서 삭제
         db.delete(source)
