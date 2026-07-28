@@ -3,12 +3,14 @@ from fastapi import FastAPI, HTTPException
 from sqlalchemy.orm import Session
 from typing import Literal, TypedDict, Annotated
 from pydantic import BaseModel, Field
-import src.llm_router as llm
+from . import llm_router
 from langgraph.graph import MessagesState, StateGraph, START, END, add_messages
 from langgraph.prebuilt import ToolNode, tools_condition
 from langchain_core.messages import SystemMessage,HumanMessage,AIMessage
-import src.tools as tool
-from storage.auth import login_or_register, get_user_by_id
+from . import tools as tool
+from .tools import source as source_tools
+from .tools import embedding as embedding_tools
+from .storage.auth import login_or_register, get_user_by_id
 
 # 커스텀 State: route_destination 필드 추가
 class UnifiedState(TypedDict):
@@ -18,10 +20,7 @@ class UnifiedState(TypedDict):
 
 tools = [ tool.retriever_vectordb , tool.embedding_file, tool.maker_logfile]
 
-# Claude Sonnet 4.5 사용 - 최고 성능 + 안정적인 tool calling
-llm_with_tools = llm.anthropic_llm.bind_tools(tools)
-# llm_with_tools = llm.google_llm.bind_tools(tools)  # Gemini 쿼터 초과
-# llm_with_tools = llm.codex_llm.bind_tools(tools)  # Codex는 tool calling 문제 있음
+llm_with_tools = llm_router.anthropic_llm.bind_tools(tools)
 
 SYSTEM_MESSAGE = SystemMessage(content=
 """당신은 개발자 일지 자동 생성 어시스턴트입니다.
@@ -135,15 +134,17 @@ def main(req):
 ## ========== 소스 관리 Agent ==========
 
 # 소스 관리 도구
-source_tools = [
-    tool.add_source_to_db,
-    tool.get_user_sources,
-    tool.delete_source_from_db
-    # embedding_file_for_user는 add_source_to_db 내부에서 사용하는 헬퍼 함수
+source_management_tools = [
+    source_tools.add_source_to_db,
+    source_tools.get_user_sources,
+    source_tools.delete_source_from_db,
+    source_tools.request_source_type_clarification,
+    embedding_tools.embed_source,
+    embedding_tools.get_embedding_status
 ]
 
 # 소스 관리 전용 LLM (간단한 CRUD → Gemini Flash, tool calling 지원)
-llm_source_manager = llm.google_llm.bind_tools(source_tools)
+llm_source_manager = llm_router.google_llm.bind_tools(source_management_tools)
 
 def create_source_system_message(user_id: str) -> SystemMessage:
     """사용자 ID를 포함한 SYSTEM_MESSAGE 생성"""
@@ -216,7 +217,7 @@ def create_source_agent(user_id: str):
             print(f"[SOURCE AGENT] 🔍 Git URL 감지! 도구 강제 호출 모드")
 
             # tool_choice로 add_source_to_db 강제 (Gemini Flash - tool calling 지원)
-            llm_forced = llm.google_llm.bind_tools(
+            llm_forced = llm_router.google_llm.bind_tools(
                 source_tools,
                 tool_choice="add_source_to_db"  # 이 도구를 반드시 호출
             )
@@ -238,7 +239,7 @@ def create_source_agent(user_id: str):
 def _source_graph_builder(user_id: str):
     """소스 관리 Graph"""
     builder = StateGraph(MessagesState)
-    tool_node = ToolNode(tools=source_tools)
+    tool_node = ToolNode(tools=source_management_tools)
 
     # 사용자 ID를 포함한 Agent 생성
     source_agent = create_source_agent(user_id)
@@ -298,7 +299,7 @@ def create_router_agent(user_id: str):
 
     # Structured Output을 사용하여 명확한 라우팅 결과 얻기
     # 단순 분류 작업 → Gemini Flash (structured output + tool calling 지원)
-    router_llm = llm.google_llm.with_structured_output(RouteDecision)
+    router_llm = llm_router.google_llm.with_structured_output(RouteDecision)
 
     def router_node(state: UnifiedState) -> dict:
         """
@@ -389,7 +390,7 @@ def _unified_graph_builder(user_id: str):
 
     # Source Management Subgraph (기존 source_graph를 node로 추가)
     source_agent_func = create_source_agent(user_id)
-    source_tool_node = ToolNode(tools=source_tools)
+    source_tool_node = ToolNode(tools=source_management_tools)
 
     builder.add_node("source_agent", source_agent_func)
     builder.add_node("source_tools", source_tool_node)

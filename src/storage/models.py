@@ -9,9 +9,17 @@ class Base(DeclarativeBase):
 
 class SourceType(str, enum.Enum):
     GIT = "git"
-    LOCAL_TIL = "local_til"
+    GIT_LOG = "git_log"
+    LOCAL = "local"
     AGENT_CHATLOG = "agent_chatlog"
     MEMSEARCH = "memsearch"
+
+class EmbeddingStatus(str, enum.Enum):
+    """임베딩 진행 상태"""
+    PENDING = "pending"
+    IN_PROGRESS = "in_progress"
+    COMPLETED = "completed"
+    FAILED = "failed"
 
 class User(Base):
     __tablename__ = "users"
@@ -29,5 +37,13 @@ class Source(Base):
 
     last_synced_at: Mapped[datetime | None]
     is_active: Mapped[bool] = mapped_column(default=True)
+
+    # 새로 추가되는 필드
+    embedding_status: Mapped[EmbeddingStatus] = mapped_column(
+        Enum(EmbeddingStatus),
+        default=EmbeddingStatus.PENDING
+    )
+    embedding_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    embedding_stats: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     __table_args__ = (UniqueConstraint("user_id", "type", "location"),)

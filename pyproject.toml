@@ -1,5 +1,5 @@
 [project]
-name = "yuta-bot"
+name = "yuta-logagent"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
@@ -8,8 +8,6 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "fastapi>=0.139.0",
     "langchain-anthropic>=1.4.8",
-    "langchain-codex-oauth>=1.0.0",
-    "langchain-google-genai>=4.2.7",
     "langgraph>=1.2.8",
     "langsmith>=0.9.8",
     "uvicorn>=0.30.0",
@@ -19,9 +17,9 @@ dependencies = [
     "chromadb>=0.5.0",
     "jq>=1.11.0",
     "langchain-huggingface>=1.2.2",
-    "sentence-transformers>=5.6.0",
     "sqlalchemy>=2.0.51",
     "pytest>=9.1.1",
     "jinja2>=3.1.0",
     "python-multipart>=0.0.5",
+    "sentence-transformers>=5.6.1",
 ]
