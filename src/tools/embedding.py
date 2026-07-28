@@ -185,3 +185,108 @@ def _collect_git_files(source: Source, user_id: str) -> list[Document]:
                 continue
 
     return documents
+
+
+def _collect_git_log(source: Source, user_id: str) -> list[Document]:
+    """Git 커밋 히스토리 수집 (message + author + date)"""
+    repo_dir = DATA_DIR / user_id / source.name
+
+    # Clone (로그 조회용)
+    if not repo_dir.exists():
+        repo_dir.parent.mkdir(parents=True, exist_ok=True)
+        result = subprocess.run(
+            ["git", "clone", source.location, str(repo_dir)],
+            capture_output=True,
+            text=True
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"Git clone 실패: {result.stderr}")
+
+    # Git log 가져오기
+    result = subprocess.run(
+        ["git", "-C", str(repo_dir), "log", "--pretty=format:%H|%an|%ad|%s", "--date=iso"],
+        capture_output=True,
+        text=True
+    )
+
+    if result.returncode != 0:
+        raise RuntimeError(f"Git log 실패: {result.stderr}")
+
+    documents = []
+    for line in result.stdout.strip().split("\n"):
+        if not line:
+            continue
+
+        parts = line.split("|", 3)
+        if len(parts) != 4:
+            continue
+
+        sha, author, date, message = parts
+
+        content = f"Commit: {message}\nAuthor: {author}\nDate: {date}"
+
+        doc = Document(
+            page_content=content,
+            metadata={
+                "user_id": user_id,
+                "source_id": source.id,
+                "source_type": "git_log",
+                "source_name": source.name,
+                "commit_sha": sha,
+                "author": author,
+                "date": date,
+                "message": message,
+                "embedded_at": datetime.now().isoformat()
+            }
+        )
+        documents.append(doc)
+
+    return documents
+
+
+def _collect_local_files(source: Source, user_id: str) -> list[Document]:
+    """로컬 디렉토리의 텍스트 파일 수집"""
+    local_path = Path(source.location)
+
+    if not local_path.exists():
+        raise FileNotFoundError(f"로컬 경로가 존재하지 않습니다: {source.location}")
+
+    documents = []
+
+    for file_path in local_path.rglob("*"):
+        if file_path.is_file() and file_path.suffix in TEXT_EXTENSIONS:
+            try:
+                with open(file_path, "r", encoding="utf-8") as f:
+                    content = f.read()
+
+                file_hash = hashlib.sha256(content.encode()).hexdigest()
+                rel_path = file_path.relative_to(local_path)
+
+                doc = Document(
+                    page_content=content,
+                    metadata={
+                        "user_id": user_id,
+                        "source_id": source.id,
+                        "source_type": "local",
+                        "source_name": source.name,
+                        "file_path": str(rel_path),
+                        "file_hash": file_hash,
+                        "embedded_at": datetime.now().isoformat()
+                    }
+                )
+                documents.append(doc)
+            except Exception as e:
+                print(f"파일 읽기 실패 {file_path}: {e}")
+                continue
+
+    return documents
+
+
+def _collect_chatlog(source: Source, user_id: str) -> list[Document]:
+    """에이전트 대화 로그 수집 (추후 구현)"""
+    return []
+
+
+def _collect_memsearch(source: Source, user_id: str) -> list[Document]:
+    """Memsearch 데이터 수집 (추후 구현)"""
+    return []
