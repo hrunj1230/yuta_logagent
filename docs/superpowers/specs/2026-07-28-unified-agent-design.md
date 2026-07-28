@@ -88,31 +88,42 @@ class RouteDecision(BaseModel):
   - `get_embedding_status`
 - **역할:** 임베딩 상태 조회, 수동 재시작
 
+#### 6. Checkpointer (대화 기록 유지)
+- **타입:** InMemorySaver (langgraph.checkpoint.memory)
+- **역할:** 사용자별 대화 히스토리 저장
+- **thread_id:** user_id 사용 (사용자별 독립된 대화 세션)
+
 ### 데이터 플로우
 
 ```
 1. 사용자 요청
    └─ unified_agent(user_id, message)
 
-2. UnifiedState 초기화
+2. Config 설정 (대화 세션 유지)
+   └─ config = {"configurable": {"thread_id": user_id}}
+
+3. UnifiedState 초기화
    └─ {"messages": [...], "route_destination": ""}
 
-3. Router Agent
+4. Router Agent
    └─ Gemini Flash 호출
    └─ RouteDecision 생성
    └─ State 업데이트
 
-4. Conditional Edge
+5. Conditional Edge
    └─ route_destination 확인
    ├─ "source_management" → Source Agent
    └─ "embedding_execution" → Embedding Agent
 
-5. Sub-Agent 실행
+6. Sub-Agent 실행
    └─ 도구 선택 및 실행
    └─ Tool Node → Agent 재실행
    └─ END
 
-6. 최종 응답
+7. Checkpoint 저장
+   └─ 대화 기록이 thread_id별로 자동 저장
+
+8. 최종 응답
    └─ messages[-1].content
 ```
 
@@ -216,30 +227,41 @@ MessagesState
   - `get_embedding_status`
 - **역할:** 모든 Source/Embedding 작업 처리
 
+#### 3. Checkpointer (대화 기록 유지)
+- **타입:** InMemorySaver (langgraph.checkpoint.memory)
+- **역할:** 사용자별 대화 히스토리 저장
+- **thread_id:** user_id 사용 (사용자별 독립된 대화 세션)
+
 ### 데이터 플로우
 
 ```
 1. 사용자 요청
    └─ unified_agent(user_id, message)
 
-2. MessagesState 초기화
+2. Config 설정 (대화 세션 유지)
+   └─ config = {"configurable": {"thread_id": user_id}}
+
+3. MessagesState 초기화
    └─ {"messages": [HumanMessage(message)]}
 
-3. Unified Agent 실행
+4. Unified Agent 실행
    └─ 시스템 메시지 + 사용자 메시지
    └─ Gemini Flash 호출
    └─ 도구 선택 (자동)
 
-4. Tool Node 실행
+5. Tool Node 실행
    └─ 선택된 도구 실행
    └─ ToolMessage 반환
 
-5. Agent 재실행 (연쇄 호출 가능)
+6. Agent 재실행 (연쇄 호출 가능)
    └─ 이전 도구 결과 확인
    └─ 추가 도구 필요 시 호출
    └─ 예: add_source_to_db → source_id 획득 → embed_source 호출
 
-6. 최종 응답
+7. Checkpoint 저장
+   └─ 대화 기록이 thread_id별로 자동 저장
+
+8. 최종 응답
    └─ messages[-1].content
 ```
 
@@ -335,26 +357,31 @@ Router 방식과 동일:
 
 ### Phase 1: 단일 Agent 방식 우선 구현
 1. `unified_controller_single.py` 작성
-2. 6개 도구 import 및 bind
-3. 시스템 메시지 작성 (user_id 포함)
-4. Graph 구성 (Agent ↔ Tools)
-5. `unified_agent(user_id, message)` 함수 export
+2. InMemorySaver checkpointer 설정
+3. 6개 도구 import 및 bind
+4. 시스템 메시지 작성 (user_id 포함)
+5. Graph 구성 (Agent ↔ Tools) + checkpointer compile
+6. `unified_agent(user_id, message)` 함수 export (config with thread_id)
 
 ### Phase 2: Router 방식 구현
 1. `add_source_and_embed` 통합 도구 작성 (tools/source.py에 추가)
 2. `unified_controller_router.py` 작성
-3. RouteDecision Pydantic 모델
-4. Router Agent 구현
-5. Source Agent, Embedding Agent 구현
-6. Unified Graph 구성
+3. InMemorySaver checkpointer 설정
+4. RouteDecision Pydantic 모델
+5. Router Agent 구현
+6. Source Agent, Embedding Agent 구현
+7. Unified Graph 구성 (checkpointer compile)
+8. `unified_agent(user_id, message)` 함수에 config 적용
 
 ### Phase 3: 테스트
 1. 단일 Agent 방식 테스트
    - Source 추가 → 자동 임베딩 확인
    - 조회, 삭제 기능 확인
+   - 대화 기록 유지 확인 (이전 대화 참조)
 2. Router 방식 테스트
    - 라우팅 정확도 확인
    - 통합 도구 동작 확인
+   - 대화 기록 유지 확인 (이전 대화 참조)
 3. 비교 분석 및 최종 선택
 
 ---
