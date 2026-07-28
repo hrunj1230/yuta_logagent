@@ -40,3 +40,56 @@ class RouteDecision(BaseModel):
     reasoning: str = Field(
         description="Explanation for this routing choice"
     )
+
+
+def create_router_agent(user_id: str):
+    """Create router agent that analyzes requests and routes to sub-agents"""
+
+    # Use Gemini Flash with structured output for routing
+    router_llm = llm_router.google_llm.with_structured_output(RouteDecision)
+
+    def router_node(state: UnifiedState) -> dict:
+        """
+        Analyze user request and route to appropriate agent.
+
+        Returns:
+            Dictionary with route_destination field
+        """
+        # Get user's message
+        user_message = state["messages"][-1].content
+
+        # Router system message
+        router_system = SystemMessage(content=f"""당신은 사용자 요청을 분석하여 적절한 Agent로 라우팅하는 Router입니다.
+
+**현재 사용자 ID: {user_id}**
+
+다음 두 가지 destination 중 하나를 선택하세요:
+
+1. **source_management** (소스 관리)
+   - 학습 소스 추가/등록 (Git 저장소, 로컬 디렉토리 등)
+   - 소스 목록 조회
+   - 소스 삭제
+   - 소스 타입 확인 요청
+   - 예: "Git 저장소 추가해줘", "내 소스 목록 보여줘", "1번 소스 삭제"
+
+2. **embedding_execution** (임베딩 실행/조회)
+   - 임베딩 실행 (수동 시작/재시작)
+   - 임베딩 상태 조회
+   - 예: "1번 소스 임베딩 다시 시작", "임베딩 상태 확인"
+
+**중요**:
+- Git URL 추가 요청은 source_management로 라우팅 (자동으로 임베딩까지 처리됨)
+- 단순 임베딩 상태 확인이나 재시작은 embedding_execution으로 라우팅
+""")
+
+        # Invoke LLM for routing decision
+        decision = router_llm.invoke([router_system, HumanMessage(content=user_message)])
+
+        print(f"[ROUTER] User request: {user_message[:50]}...")
+        print(f"[ROUTER] Decision: {decision.destination}")
+        print(f"[ROUTER] Reasoning: {decision.reasoning}")
+
+        # Update state with routing decision
+        return {"route_destination": decision.destination}
+
+    return router_node
