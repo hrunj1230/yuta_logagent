@@ -67,3 +67,31 @@ def create_unified_agent(user_id: str):
         return {"messages": [result]}
 
     return unified_agent_node
+
+
+def _build_graph(user_id: str):
+    """Build LangGraph for single unified agent"""
+    builder = StateGraph(MessagesState)
+
+    # Create agent and tool nodes
+    unified_agent_node = create_unified_agent(user_id)
+    tool_node = ToolNode(tools=unified_tools)
+
+    # Add nodes
+    builder.add_node("agent", unified_agent_node)
+    builder.add_node("tools", tool_node)
+
+    # Add edges
+    builder.add_edge(START, "agent")
+    builder.add_conditional_edges(
+        "agent",
+        tools_condition,
+        {
+            "tools": "tools",
+            "__end__": END,
+        },
+    )
+    builder.add_edge("tools", "agent")
+
+    # Compile with checkpointer
+    return builder.compile(checkpointer=checkpointer)
