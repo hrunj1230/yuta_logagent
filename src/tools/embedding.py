@@ -331,3 +331,60 @@ def _process_source_by_type(source: Source, user_id: str) -> dict:
             "duration_seconds": round(duration, 2)
         }
     }
+
+
+@tool
+def embed_source(user_id: str, source_id: int) -> str:
+    """
+    소스의 모든 파일을 임베딩합니다 (증분 업데이트).
+
+    Args:
+        user_id: 사용자 ID
+        source_id: 소스 ID
+
+    Returns:
+        임베딩 결과 (상세 통계)
+    """
+    db = SessionLocal()
+    try:
+        source = db.query(Source).filter_by(id=source_id, user_id=user_id).first()
+
+        if not source:
+            return f"❌ 오류: 소스를 찾을 수 없습니다. (ID: {source_id})"
+
+        if source.embedding_status == EmbeddingStatus.IN_PROGRESS:
+            return f"⏳ 소스 '{source.name}'는 이미 임베딩 진행 중입니다."
+
+        # 상태 업데이트
+        source.embedding_status = EmbeddingStatus.IN_PROGRESS
+        source.embedding_error = None
+        db.commit()
+
+        try:
+            # 소스 타입별 처리
+            result = _process_source_by_type(source, user_id)
+
+            # 성공 처리
+            source.embedding_status = EmbeddingStatus.COMPLETED
+            source.last_synced_at = datetime.now()
+            source.embedding_stats = json.dumps(result["stats"])
+            source.embedding_error = None
+            db.commit()
+
+            return f"""✅ 임베딩 완료: {source.name}
+- 처리된 파일: {result['stats']['files_processed']}개
+- 생성된 청크: {result['stats']['chunks_created']}개
+- 소요 시간: {result['stats']['duration_seconds']}초
+- 새로 추가: {result['stats']['new_chunks']}개
+- 스킵: {result['stats']['skipped_chunks']}개"""
+
+        except Exception as e:
+            # 실패 처리
+            source.embedding_status = EmbeddingStatus.FAILED
+            source.embedding_error = str(e)
+            db.commit()
+
+            return f"❌ 임베딩 실패: {source.name}\n오류: {str(e)}"
+
+    finally:
+        db.close()
