@@ -1,7 +1,7 @@
 """
 통합 소스 관리 Agent (Router 방식)
 
-이 모듈은 소스 관리와 임베딩 실행을 분리한 Router 기반 멀티 Agent 시스템을 제공합니다.
+이 모듈은 소스 관리, 로그 관리, 임베딩 실행을 분리한 Router 기반 멀티 Agent 시스템을 제공합니다.
 Router가 사용자 요청을 분석하여 적절한 전문 Agent에게 작업을 위임합니다.
 
 공개 API:
@@ -17,6 +17,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from . import llm_router
 from .tools import source as source_tools
 from .tools import embedding as embedding_tools
+from .tools import log as log_tools
 
 
 # 대화 기록 유지를 위한 Checkpointer
@@ -34,19 +35,21 @@ class UnifiedState(TypedDict):
 class RouteDecision(BaseModel):
     """Router Agent 결정 결과"""
     destination: Literal["source_management", "embedding_execution"] = Field(
-        description="CRUD 작업은 'source_management', 임베딩 작업은 'embedding_execution'"
+        description="소스 CRUD 및 로그 작업은 'source_management', 임베딩 작업은 'embedding_execution'"
     )
     reasoning: str = Field(
         description="이 라우팅 선택에 대한 설명"
     )
 
 
-# source_agent용 소스 관리 도구 (Task 9)
+# source_agent용 소스 및 로그 관리 도구 (Task 9)
 source_management_tools = [
     source_tools.add_source_and_embed,
     source_tools.add_source_to_db,
     source_tools.get_user_sources,
     source_tools.delete_source_from_db,
+    log_tools.retriever_vectordb,
+    log_tools.maker_logfile,
 ]
 
 # embedding_agent용 임베딩 관리 도구 (Task 10)
@@ -79,12 +82,13 @@ def create_router_agent(user_id: str):
 
 다음 두 가지 destination 중 하나를 선택하세요:
 
-1. **source_management** (소스 관리)
+1. **source_management** (소스 및 로그 관리)
    - 학습 소스 추가/등록 (Git 저장소, 로컬 디렉토리 등)
    - 소스 목록 조회
    - 소스 삭제
    - 소스 타입 확인 요청
-   - 예: "Git 저장소 추가해줘", "내 소스 목록 보여줘", "1번 소스 삭제"
+   - 일지 작성 및 저장 (날짜 기반 검색 + 파일 저장)
+   - 예: "Git 저장소 추가해줘", "내 소스 목록 보여줘", "1번 소스 삭제", "오늘 일지 작성해줘"
 
 2. **embedding_execution** (임베딩 실행/조회)
    - 임베딩 실행 (수동 시작/재시작)
@@ -93,6 +97,7 @@ def create_router_agent(user_id: str):
 
 **중요**:
 - Git URL 추가 요청은 source_management로 라우팅 (자동으로 임베딩까지 처리됨)
+- 일지 작성/저장 요청은 source_management로 라우팅
 - 단순 임베딩 상태 확인이나 재시작은 embedding_execution으로 라우팅
 """)
 
@@ -111,7 +116,7 @@ def create_router_agent(user_id: str):
 
 def create_source_agent(user_id: str):
     """
-    Task 9: Gemini Flash를 사용하는 소스 관리 Agent 생성
+    Task 9: Gemini Flash를 사용하는 소스 및 로그 관리 Agent 생성
 
     소스 CRUD 작업 처리:
     - add_source_and_embed: 소스 추가 후 임베딩 시작
@@ -119,11 +124,15 @@ def create_source_agent(user_id: str):
     - get_user_sources: 모든 소스 목록 조회
     - delete_source_from_db: 소스 삭제
 
+    로그 관리 작업 처리:
+    - retriever_vectordb: 날짜 기반 데이터 검색
+    - maker_logfile: 일지 파일 저장
+
     Args:
         user_id: 컨텍스트 및 권한 부여를 위한 사용자 ID
 
     Returns:
-        소스 관리 요청을 처리하는 Agent 함수
+        소스 및 로그 관리 요청을 처리하는 Agent 함수
     """
     # Gemini Flash에 도구 바인딩
     source_agent_llm = llm_router.google_llm.bind_tools(source_management_tools)
@@ -138,21 +147,26 @@ def create_source_agent(user_id: str):
         # 사용자 메시지 추출
         user_message = state["messages"][-1].content
 
-        # 소스 관리 시스템 메시지 (한국어)
-        source_system = SystemMessage(content=f"""당신은 소스 관리 전문 에이전트입니다 (user_id: {user_id}).
+        # 소스 및 로그 관리 시스템 메시지 (한국어)
+        source_system = SystemMessage(content=f"""당신은 소스 및 로그 관리 전문 에이전트입니다 (user_id: {user_id}).
 
 **주요 책임:**
-소스 생명주기 관리 (CRUD):
-1. add_source_and_embed - Git 저장소 추가 후 즉시 임베딩 시작
-2. add_source_to_db - 소스만 등록 (임베딩 미포함)
-3. get_user_sources - 등록된 모든 소스 목록 조회
-4. delete_source_from_db - 소스 및 관련 임베딩 삭제
+1. 소스 생명주기 관리 (CRUD):
+   - add_source_and_embed - Git 저장소 추가 후 즉시 임베딩 시작
+   - add_source_to_db - 소스만 등록 (임베딩 미포함)
+   - get_user_sources - 등록된 모든 소스 목록 조회
+   - delete_source_from_db - 소스 및 관련 임베딩 삭제
+
+2. 일지 관리:
+   - retriever_vectordb - 날짜 기반 VectorDB 데이터 검색
+   - maker_logfile - 일지 파일 저장
 
 **사용 규칙:**
 - 사용자가 Git URL을 추가하고 "임베딩도 해줘"라고 하면: add_source_and_embed 사용
 - Git URL을 추가하되 수동으로 임베딩하고 싶다면: add_source_to_db만 사용
 - 소스 목록을 보고 싶다면: get_user_sources 사용
 - 소스를 제거하려면: delete_source_from_db 사용
+- 일지 작성 요청 시: retriever_vectordb로 날짜 데이터 검색 → maker_logfile로 저장
 
 **항상 사용자가 제공한 정보를 먼저 요청하세요:**
 - 소스 이름, 타입, 위치 등이 부족하면 물어봐주세요.

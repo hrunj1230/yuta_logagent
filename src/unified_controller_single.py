@@ -1,7 +1,7 @@
 """
 통합 소스 관리 Agent (단일 Agent 방식)
 
-이 모듈은 모든 소스 및 임베딩 관리 작업을 처리하는 단일 LangGraph Agent를 제공합니다.
+이 모듈은 모든 소스, 임베딩, 일지 관리 작업을 처리하는 단일 LangGraph Agent를 제공합니다.
 Agent는 작업을 자동으로 연쇄 호출하고 (예: add_source_to_db → embed_source),
 InMemorySaver checkpointer를 통해 사용자별 대화 기록을 유지합니다.
 
@@ -15,6 +15,8 @@ InMemorySaver checkpointer를 통해 사용자별 대화 기록을 유지합니�
     - request_source_type_clarification
     - embed_source
     - get_embedding_status
+    - retriever_vectordb
+    - maker_logfile
 """
 from typing import Annotated
 from langchain_core.messages import SystemMessage, HumanMessage
@@ -24,19 +26,22 @@ from langgraph.checkpoint.memory import InMemorySaver
 from . import llm_router
 from .tools import source as source_tools
 from .tools import embedding as embedding_tools
+from .tools import log as log_tools
 
 
 # 대화 기록 유지를 위한 Checkpointer
 checkpointer = InMemorySaver()
 
-# 6개의 소스 및 임베딩 관리 도구
+# 8개의 소스, 임베딩, 로그 관리 도구
 unified_tools = [
     source_tools.add_source_to_db,
     source_tools.get_user_sources,
     source_tools.delete_source_from_db,
     source_tools.request_source_type_clarification,
     embedding_tools.embed_source,
-    embedding_tools.get_embedding_status
+    embedding_tools.get_embedding_status,
+    log_tools.retriever_vectordb,
+    log_tools.maker_logfile
 ]
 
 # 단일 Agent용 Gemini Flash (빠르고 도구 호출 지원)
@@ -45,7 +50,7 @@ llm_with_tools = llm_router.google_llm.bind_tools(unified_tools)
 
 def create_system_message(user_id: str) -> SystemMessage:
     """user_id 컨텍스트가 포함된 시스템 메시지 생성"""
-    return SystemMessage(content=f"""당신은 소스 관리 어시스턴트입니다 (user_id: {user_id}).
+    return SystemMessage(content=f"""당신은 소스 관리 및 일지 작성 어시스턴트입니다 (user_id: {user_id}).
 
 주요 기능:
 1. Source 관리
@@ -58,10 +63,15 @@ def create_system_message(user_id: str) -> SystemMessage:
    - 임베딩 실행 (embed_source)
    - 임베딩 상태 조회 (get_embedding_status)
 
+3. 일지 관리
+   - 날짜 기반 데이터 검색 (retriever_vectordb)
+   - 일지 파일 저장 (maker_logfile)
+
 워크플로우:
 - Git URL 추가 시: add_source_to_db를 먼저 호출하여 source_id를 얻은 후, 즉시 embed_source를 호출하여 자동으로 임베딩을 시작하세요.
 - 소스 조회/삭제: 해당 도구만 호출
 - 임베딩 상태 확인/재시작: 해당 도구만 호출
+- 일지 작성 요청 시: retriever_vectordb로 날짜 데이터를 검색한 후, maker_logfile로 저장하세요.
 
 중요: Git URL이 포함된 추가 요청은 반드시 add_source_to_db → embed_source 순서로 연쇄 호출하세요.
 """)
