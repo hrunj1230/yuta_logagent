@@ -290,3 +290,44 @@ def _collect_chatlog(source: Source, user_id: str) -> list[Document]:
 def _collect_memsearch(source: Source, user_id: str) -> list[Document]:
     """Memsearch 데이터 수집 (추후 구현)"""
     return []
+
+
+def _process_source_by_type(source: Source, user_id: str) -> dict:
+    """소스 타입에 따라 적절한 처리 함수 호출"""
+    start_time = time.time()
+
+    # 소스 타입별 파일 수집
+    if source.type == SourceType.GIT:
+        documents = _collect_git_files(source, user_id)
+    elif source.type == SourceType.GIT_LOG:
+        documents = _collect_git_log(source, user_id)
+    elif source.type == SourceType.LOCAL:
+        documents = _collect_local_files(source, user_id)
+    elif source.type == SourceType.AGENT_CHATLOG:
+        documents = _collect_chatlog(source, user_id)
+    elif source.type == SourceType.MEMSEARCH:
+        documents = _collect_memsearch(source, user_id)
+    else:
+        raise ValueError(f"지원하지 않는 소스 타입: {source.type}")
+
+    # 증분 업데이트 (기존 임베딩 확인)
+    new_docs, skipped_count = _filter_new_documents(documents, user_id, source.id)
+
+    # 청크 분할
+    chunks = _split_documents(new_docs)
+
+    # ChromaDB에 저장
+    if chunks:
+        _save_to_chromadb(chunks, user_id)
+
+    duration = time.time() - start_time
+
+    return {
+        "stats": {
+            "files_processed": len(documents),
+            "chunks_created": len(chunks),
+            "new_chunks": len(chunks),
+            "skipped_chunks": skipped_count,
+            "duration_seconds": round(duration, 2)
+        }
+    }
