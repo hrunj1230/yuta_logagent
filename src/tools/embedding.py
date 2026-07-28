@@ -388,3 +388,50 @@ def embed_source(user_id: str, source_id: int) -> str:
 
     finally:
         db.close()
+
+
+@tool
+def get_embedding_status(user_id: str, source_id: int) -> str:
+    """
+    소스의 임베딩 상태를 조회합니다.
+
+    Args:
+        user_id: 사용자 ID
+        source_id: 소스 ID
+
+    Returns:
+        임베딩 상태 정보
+    """
+    db = SessionLocal()
+    try:
+        source = db.query(Source).filter_by(id=source_id, user_id=user_id).first()
+
+        if not source:
+            return f"❌ 오류: 소스를 찾을 수 없습니다. (ID: {source_id})"
+
+        status_emoji = {
+            EmbeddingStatus.PENDING: "⏳",
+            EmbeddingStatus.IN_PROGRESS: "🔄",
+            EmbeddingStatus.COMPLETED: "✅",
+            EmbeddingStatus.FAILED: "❌"
+        }.get(source.embedding_status, "❓")
+
+        result = f"{status_emoji} 소스: {source.name}\n"
+        result += f"상태: {source.embedding_status.value}\n"
+
+        if source.last_synced_at:
+            result += f"마지막 동기화: {source.last_synced_at.strftime('%Y-%m-%d %H:%M:%S')}\n"
+
+        if source.embedding_stats:
+            stats = json.loads(source.embedding_stats)
+            result += f"\n통계:\n"
+            result += f"- 처리된 파일: {stats.get('files_processed', 0)}개\n"
+            result += f"- 생성된 청크: {stats.get('chunks_created', 0)}개\n"
+
+        if source.embedding_status == EmbeddingStatus.FAILED and source.embedding_error:
+            result += f"\n⚠️ 오류: {source.embedding_error}"
+
+        return result
+
+    finally:
+        db.close()
