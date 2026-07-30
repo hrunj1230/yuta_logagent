@@ -52,7 +52,7 @@ jobs:
       - name: Deploy to EC2 via SSM
         env:
           IMAGE_TAG: ${{ needs.build-and-push.outputs.image_tag }}
-          INSTANCE_ID: i-0b5c23a2287a72821
+          INSTANCE_ID: ${{ vars.EC2_INSTANCE_ID }}
         run: |
           sed "s|__IMAGE_TAG__|${IMAGE_TAG}|g" scripts/deploy.sh > /tmp/deploy.sh
 
