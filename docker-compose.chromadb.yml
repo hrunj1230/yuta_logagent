@@ -1,0 +1,48 @@
+version: '3.8'
+
+services:
+  # ChromaDB 서버 (선택사항 - 대규모 임베딩 시 권장)
+  chromadb:
+    image: ghcr.io/chroma-core/chroma:latest
+    container_name: yuta-chromadb
+    ports:
+      - "8001:8000"
+    volumes:
+      - chromadb_data:/chroma/chroma
+    environment:
+      - IS_PERSISTENT=TRUE
+      - ANONYMIZED_TELEMETRY=FALSE
+    networks:
+      - yuta-network
+    restart: unless-stopped
+
+  # FastAPI 애플리케이션
+  app:
+    build: .
+    container_name: yuta-logagent
+    depends_on:
+      - chromadb
+    ports:
+      - "8000:8000"
+    # .env 파일에서 환경 변수 로드
+    env_file:
+      - .env
+    environment:
+      # ChromaDB 서버 연결 (override)
+      - CHROMADB_HOST=chromadb
+      - CHROMADB_PORT=8000
+    volumes:
+      - ./users.db:/app/users.db
+      - ./data:/app/data
+      # ChromaDB는 별도 컨테이너 사용
+    restart: unless-stopped
+    networks:
+      - yuta-network
+
+volumes:
+  chromadb_data:
+    driver: local
+
+networks:
+  yuta-network:
+    driver: bridge

@@ -1,0 +1,23 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    container_name: yuta-logagent
+    ports:
+      - "8000:8000"
+    # .env 파일에서 환경 변수 로드 (environment 섹션 제거)
+    env_file:
+      - .env
+    volumes:
+      # 영구 데이터 마운트
+      - ./users.db:/app/users.db
+      - ./chroma_db:/app/chroma_db
+      - ./data:/app/data
+    restart: unless-stopped
+    networks:
+      - yuta-network
+
+networks:
+  yuta-network:
+    driver: bridge

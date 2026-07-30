@@ -1,0 +1,53 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+
+# 개발 파일
+.git/
+.gitignore
+.pytest_cache/
+.coverage
+*.log
+
+# 문서
+docs/
+*.md
+!README.md
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# 테스트
+tests/
+test_*.py
+check_*.py
+
+# 환경 변수 (런타임에 주입)
+.env
+.env.*
+
+# 영구 데이터 (볼륨 마운트로 처리)
+users.db
+users.db.*
+chroma_db/
+data/
+
+# 백업
+*.backup_*
+
+# Docker
+Dockerfile
+docker-compose*.yml
+.dockerignore
+
+# 로그
+logs/
+*.log
