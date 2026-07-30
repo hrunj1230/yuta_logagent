@@ -16,6 +16,11 @@ wheels/
 # ChromaDB data
 chroma_db
 
+# User data (contains real user content, must never be committed)
+users.db
+users.db.backup_*
+data/
+
 docs/aidocs/
 repos
 test_retrieval.py
