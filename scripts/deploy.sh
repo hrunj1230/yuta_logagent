@@ -43,7 +43,17 @@ docker run -d \
 
 docker image prune -f
 
-sleep 5
-curl -sS -m 10 -o /dev/null -w "health check: HTTP %{http_code}\n" http://localhost:8000
+# 모델 로딩 등으로 기동에 시간이 걸릴 수 있어 최대 2분간 재시도
+echo "Waiting for service to become healthy..."
+for i in $(seq 1 24); do
+  CODE=$(curl -sS -m 5 -o /dev/null -w "%{http_code}" http://localhost:8000 || true)
+  if [ "$CODE" = "200" ]; then
+    echo "health check: HTTP 200 (attempt $i)"
+    echo "Deployed ${IMAGE}"
+    exit 0
+  fi
+  sleep 5
+done
 
-echo "Deployed ${IMAGE}"
+echo "health check: service did not become healthy in time (last code: $CODE)"
+exit 1
