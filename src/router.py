@@ -3,8 +3,8 @@ from fastapi.responses import StreamingResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
-from . import controller
-from .tools import embedding_file
+from . import unified_controller_single as controller
+from .tools.embedding import embed_source
 from .storage.database import get_db
 import uuid
 import subprocess
@@ -18,8 +18,8 @@ templates = Jinja2Templates(directory="templates")
 
 
 class QueryReq(BaseModel):
-    req: str
-    thread_id: str
+    message: str
+    user_id: str
 class QueryRes(BaseModel):
     res: str
     thread_id: str
@@ -133,9 +133,8 @@ async def delete_source(user_id: str, source_id: int, db: Session = Depends(get_
 #agent-router
 @router.post("/call_agent")
 async def call_agent(req: QueryReq):
-    thread_id = req.thread_id or str(uuid.uuid4())
-    res = controller.main(req)
-    return res
+    res = controller.unified_agent(req.user_id, req.message)
+    return {"response": res}
 
 @router.post("/unified_agent")
 async def unified_agent_endpoint(user_id: str = Form(...), message: str = Form(...)):
@@ -155,12 +154,6 @@ async def source_manager(user_id: str = Form(...), message: str = Form(...)):
     """
     res = controller.source_manager(user_id, message)
     return {"response": res}
-
-@router.post("/embed")
-async def embed_documents(req: EmbeddingReq):
-    """파일이나 디렉토리를 임베딩"""
-    result = embedding_file.invoke({"path": req.path})
-    return {"message": "Embedding complete", "vectorstore": str(result)}
 
 # 새로운 엔드포인트: Git 저장소 동기화
 @router.post("/sync_git_repo")

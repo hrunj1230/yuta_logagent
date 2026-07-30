@@ -20,11 +20,16 @@ local_embedding = HuggingFaceEmbeddings(
 # 임베딩 함수 별칭 (log 도구에서 사용)
 embedding_function = local_embedding
 
-#llm -google
-google_llm = ChatGoogleGenerativeAI(
-    model="gemini-2.5-flash-lite",
-    google_api_key = os.getenv("GOOGLE_API_KEY")
-)
+#llm -google (선택적 초기화 - API 키가 있을 때만)
+google_api_key = os.getenv("GOOGLE_API_KEY")
+if google_api_key:
+    google_llm = ChatGoogleGenerativeAI(
+        model="gemini-2.5-flash-lite",
+        google_api_key=google_api_key
+    )
+else:
+    google_llm = None  # API 키 없으면 None
+    print("⚠️  GOOGLE_API_KEY not set. Google LLM will not be available.")
 # ChromaDB 클라이언트 설정 (서버 모드)
 import chromadb
 

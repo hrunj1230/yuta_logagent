@@ -16,7 +16,7 @@ from .. import llm_router
 
 
 @tool
-def retriever_vectordb(date: str, reference_len: str) -> str:
+def retriever_vectordb(date: str, reference_len: str,user_id: str) -> str:
     """
     이 도구는 사용자의 요청에서 2026년 07월 09일, 2026_12_03, 2026.01.13와 같은 날짜 형식의 데이터를 받으면 chroma_db에서
     그 날짜와 유사도가 높은 문서를 가져오는 도구입니다.
@@ -31,7 +31,7 @@ def retriever_vectordb(date: str, reference_len: str) -> str:
     """
     # ChromaDB 컬렉션 열기
     reopened = Chroma(
-        collection_name="user_hrun",  # 컬렉션 이름 지정
+        collection_name=f"user_{user_id}",  # 컬렉션 이름 지정
         embedding_function=llm_router.embedding_function,
         client=llm_router.chroma_client,  # 서버 모드 클라이언트 사용
     )
