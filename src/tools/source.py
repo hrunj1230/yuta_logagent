@@ -3,9 +3,6 @@ from ..storage.database import SessionLocal
 from ..storage.models import Source, SourceType, EmbeddingStatus
 import re
 
-# Import at module level (after existing imports)
-from .embedding import embed_source as _embed_source_tool
-
 
 @tool
 def add_source_to_db(
@@ -197,58 +194,3 @@ def request_source_type_clarification() -> str:
    예: /.memsearch
 
 소스를 추가할 때 타입을 함께 지정해주세요."""
-
-
-@tool
-def add_source_and_embed(
-    user_id: str,
-    name: str,
-    source_type: str,
-    location: str
-) -> str:
-    """
-    소스를 추가하고 즉시 임베딩을 시작합니다 (통합 도구).
-
-    이 도구는 add_source_to_db와 embed_source를 연쇄적으로 호출하여
-    한 번의 요청으로 소스 등록과 임베딩 시작을 모두 처리합니다.
-
-    Args:
-        user_id: 사용자 ID
-        name: 소스 이름
-        source_type: 소스 타입 (git, git_log, local, agent_chatlog, memsearch)
-        location: 소스 위치 (Git URL, 로컬 경로 등)
-
-    Returns:
-        통합 작업 결과 메시지
-    """
-    # Step 1: Add source to database
-    add_result = add_source_to_db.invoke({
-        "user_id": user_id,
-        "name": name,
-        "source_type": source_type,
-        "location": location
-    })
-
-    # Check if source addition failed
-    if add_result.startswith("❌"):
-        return add_result
-
-    # Extract source_id from success message
-    # Format: "...ID: {source.id}..."
-    match = re.search(r'ID: (\d+)', add_result)
-    if not match:
-        return f"❌ 오류: 소스는 추가되었으나 ID를 찾을 수 없습니다.\n{add_result}"
-
-    source_id = int(match.group(1))
-
-    # Step 2: Start embedding immediately
-    embed_result = _embed_source_tool.invoke({
-        "user_id": user_id,
-        "source_id": source_id
-    })
-
-    # Return combined result
-    return f"""{add_result}
-
-🚀 임베딩 자동 시작:
-{embed_result}"""

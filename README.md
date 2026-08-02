@@ -1,100 +1,108 @@
-# Log Maker 📝
+# 나의 사관일지 📝
 
-> TIL 기록을 자동으로 일지로 변환하는 AI 에이전트
+> Git 저장소(TIL, 커밋 로그 등)를 임베딩해두고, 대화로 요청하면 AI가 자동으로 개발 일지를 써주는 에이전트
 
-GitHub에 저장된 TIL(Today I Learned) 마크다운 파일들을 AI가 분석하여 구조화된 개발 일지를 자동으로 생성합니다.
+로그인만 하면 챗봇 한 화면에서 "소스 등록", "임베딩", "날짜별 일지 작성"을 모두 대화로 처리합니다.
+내부적으로는 LangGraph 기반 단일 Agent가 상황에 맞는 도구를 스스로 연쇄 호출합니다.
 
 ## ✨ 주요 기능
 
-- 🔄 **Git 자동 동기화**: GitHub 저장소 URL만 입력하면 자동으로 TIL 가져오기
-- 🤖 **AI 에이전트**: LangGraph 기반 자동 워크플로우
-- 📊 **벡터 검색**: ChromaDB로 날짜별 기록 빠른 검색
-- 📄 **일지 자동 생성**: Claude Sonnet 4.5가 구조화된 마크다운 일지 작성
-- 👥 **다중 사용자**: 사용자별 데이터 격리 및 컬렉션 분리
-- 🌐 **웹 UI**: 브라우저에서 간편하게 사용
+- 🤖 **AI 어시스턴트 (단일 Agent)**: "이 저장소 추가해줘", "7월 30일 일지 작성해줘" 같은 대화로 소스 관리 + 일지 생성을 모두 처리
+- 🔗 **Git 저장소 등록 + 자동 임베딩**: 소스를 추가하면 Agent가 곧바로 임베딩까지 이어서 실행 (증분 업데이트 지원)
+- 📊 **날짜 기반 벡터 검색**: ChromaDB 메타데이터 필터 → 유사도 검색 폴백
+- 📄 **일지 자동 생성**: Claude Sonnet 4.5가 검색 결과를 분석해 마크다운 일지 작성 (`logs/YYYY.MM.DD_log.md`)
+- 👥 **다중 사용자**: `user_id` 기반 로그인/자동 회원가입, 사용자별 ChromaDB 컬렉션 분리
+- 🌐 **웹 UI**: 로그인 → 개인 페이지(AI 어시스턴트) → 설정(소스 목록/삭제) 흐름
 
-## 🚀 빠른 시작 (3단계)
+## 🚀 빠른 시작
 
 ```bash
-# 1. 설치
-pip install -e .
+# 1. 의존성 설치 (uv 사용)
+uv sync
 
-# 2. API 키 설정 (.env 파일 생성)
-ANTHROPIC_API_KEY=sk-ant-api03-xxxxx
+# 2. API 키 설정 (.env 파일)
+echo "ANTHROPIC_API_KEY=sk-ant-api03-xxxxx" > .env
 
 # 3. 실행
-uvicorn main:app --reload
+uv run uvicorn main:app --reload
 ```
 
-브라우저에서 http://localhost:8000/ 접속하면 끝!
+브라우저에서 http://localhost:8000/ 접속 → `user_id` 입력하면 바로 시작됩니다.
+자세한 설치 과정은 [SETUP.md](SETUP.md) 참고.
 
 ## 📚 문서
 
 - **[SETUP.md](SETUP.md)** - 설치 & 실행 가이드 (시작하기!)
-- [docs/GIT_SYNC_GUIDE.md](docs/GIT_SYNC_GUIDE.md) - Git 동기화 상세
-- [docs/CHROMADB_SERVER_SETUP.md](docs/CHROMADB_SERVER_SETUP.md) - 다중 사용자 설정 (선택)
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) - 전체 아키텍처, 데이터 흐름, 알려진 이슈
+- [docs/tools-usage.md](docs/tools-usage.md) - 소스/임베딩 도구 사용 예시
+- [docs/git-source-type-detection.md](docs/git-source-type-detection.md) - GIT vs GIT_LOG 소스 타입 판단 기준
+- [docs/cicd-setup.md](docs/cicd-setup.md) - CI/CD (GitHub Actions → ECR → EC2) 배포 파이프라인
 
 ## 🎯 사용 예시
 
-### 1. Git 저장소 동기화
-```bash
-curl -X POST "http://localhost:8000/sync_git_repo" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "user_id": "hrun",
-    "repo_url": "https://github.com/username/til.git"
-  }'
+가장 확실하게 동작하는 경로는 웹 UI의 **AI 어시스턴트** 채팅창입니다. 로그인 후 `/user/{user_id}` 페이지에서:
+
+```
+"https://github.com/username/til.git 추가해줘"
+→ Agent가 소스 등록 후 자동으로 임베딩 시작
+
+"내 소스 목록 보여줘"
+→ 등록된 소스와 임베딩 상태 확인
+
+"2026-07-30 일지 작성해줘"
+→ 벡터DB 검색 → Claude가 일지 작성 → logs/2026.07.30_log.md 저장
 ```
 
-### 2. 일지 생성
+같은 요청을 API로 직접 보내려면 (내부적으로 채팅창이 호출하는 것과 동일한 엔드포인트):
+
 ```bash
-curl -X POST "http://localhost:8000/call_agent" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "req": "2026년 6월 29일 일지 작성해줘",
-    "thread_id": "user001"
-  }'
+curl -X POST "http://localhost:8000/unified_agent" \
+  -F "user_id=hrun" \
+  -F "message=2026-07-30 일지 작성해줘"
 ```
 
-### 3. 결과 확인
-```bash
-cat logs/2026.06.29_log.md
-```
+> ⚠️ `log-maker` 페이지의 "Git 동기화"/"일지 생성" 폼(`/sync_git_repo`, `/call_agent`)은
+> 현재 알려진 버그로 정상 동작하지 않습니다. 자세한 내용은 [docs/ARCHITECTURE.md의 "알려진 이슈"](docs/ARCHITECTURE.md#7-알려진-이슈-2026-07-31-검증-중-발견)를 참고하세요.
 
 ## 🏗️ 아키텍처
 
 ```
-사용자 → FastAPI → LangGraph Agent → Tools
-                         ↓
-                    ChromaDB (벡터 검색)
-                         ↓
-                    Claude AI (일지 생성)
-                         ↓
-                    logs/YYYY.MM.DD_log.md
+사용자 → 웹 UI (로그인/개인페이지/설정) → FastAPI (src/router.py)
+                                              ↓ /unified_agent
+                                  LangGraph 단일 Agent (Claude Sonnet 4.5)
+                                              ↓ 도구 호출
+                          소스 CRUD · 임베딩 실행 · 날짜 검색+일지 저장
+                                              ↓
+                        SQLite (사용자/소스 메타데이터) · ChromaDB (벡터, 사용자별 컬렉션)
 ```
+
+세부 컴포넌트와 데이터 흐름은 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)에 정리되어 있습니다.
 
 ## 🛠️ 기술 스택
 
-- **FastAPI**: 웹 서버 & REST API
-- **LangGraph**: AI Agent 워크플로우
-- **ChromaDB**: 벡터 데이터베이스
-- **Claude Sonnet 4.5**: LLM (Anthropic)
-- **HuggingFace**: 임베딩 모델 (무료, 로컬)
+- **FastAPI + Jinja2**: 웹 서버 & HTML UI
+- **LangGraph**: 단일 Agent 워크플로우 (StateGraph)
+- **Claude Sonnet 4.5** (Anthropic): LLM
+- **HuggingFace `jhgan/ko-sroberta-multitask`**: 임베딩 모델 (한국어 특화, 로컬 무료 실행)
+- **ChromaDB**: 벡터 데이터베이스 (로컬 persistent)
+- **SQLite + SQLAlchemy**: 사용자/소스 메타데이터
 
 ## ✅ 구현 완료
 
-- ✅ 특정 날짜의 daily_log 자동 생성
-- ✅ 벡터 DB 조회 후 AI 분석/요약
-- ✅ Git 저장소 자동 동기화 & 임베딩
-- ✅ 날짜별 검색 (메타데이터 + 유사도)
-- ✅ 웹 UI (브라우저에서 간편 사용)
+- ✅ AI 어시스턴트 대화형 소스 관리 (등록 → 자동 임베딩 연쇄 호출)
+- ✅ 날짜 기반 일지 자동 생성 (메타데이터 필터 + 유사도 검색 폴백)
+- ✅ 다중 사용자 로그인/자동 회원가입 및 데이터 격리
+- ✅ 소스 타입별 수집 (git 파일, git 커밋 로그, 로컬 디렉토리)
+- ✅ 증분 임베딩 (파일 해시 비교로 변경분만 처리)
+- ✅ 웹 UI (로그인/개인페이지/설정 페이지)
 
 ## 🔮 향후 계획
 
+- [ ] `/sync_git_repo`, `/call_agent` 버그 수정 (상세: docs/ARCHITECTURE.md 알려진 이슈)
+- [ ] 소스 삭제 시 ChromaDB 임베딩도 함께 정리 (현재는 SQLite 레코드만 삭제됨)
 - [ ] 프롬프트 커스터마이징
 - [ ] Private 저장소 지원 (GitHub Token)
 - [ ] 일지 템플릿 설정
-- [ ] JSON/PDF 파일 지원
 
 
 ## 개발 일지

@@ -1,435 +1,251 @@
-# 아키텍처 설계 문서
+# 아키텍처 문서
+
+**최종 갱신:** 2026-07-31
+**대상:** yuta_logagent (나의 사관일지)
+
+> 이 문서는 현재 코드베이스를 직접 확인하여 작성한 **현재 구현 기준** 아키텍처 문서입니다.
+> (이전 버전은 `docs/정리/ARCHITECTURE.md`에 초안 형태로 보관되어 있으며, Router 방식 시절 설계와
+> 실제 구현 사이에 괴리가 있어 이번에 현재 상태 기준으로 다시 작성했습니다.)
+
+---
 
 ## 1. 시스템 개요
 
-**Log Maker**는 개발자의 다양한 활동 기록(Git Commit, TIL, AI Chat Log 등)을 수집하여 자동으로 구조화된 개발 일지를 생성하는 AI 에이전트 시스템입니다.
+**나의 사관일지**는 Git 저장소(TIL, 커밋 로그 등) 같은 개발 활동 기록을 벡터DB에 임베딩해두고,
+사용자가 자연어로 요청하면 LangGraph 기반 단일 Agent가 필요한 도구를 스스로 호출해
+- 소스(Source) 등록/조회/삭제
+- 임베딩 실행/상태 조회
+- 날짜 기반 검색 + 마크다운 일지 생성
 
-### 핵심 목표
-- 📝 개발자의 학습/작업 기록을 자동으로 수집하고 분석
-- 🤖 AI를 활용한 자동 일지 생성
-- 🔍 과거 기록의 빠른 검색 및 참조
-- 📊 주간/월간 요약을 통한 성장 추적
+를 처리하는 FastAPI 웹 애플리케이션입니다.
+
+### 전환 히스토리
+- Router 기반 멀티 에이전트 → **Single Agent 방식**으로 전환 (현재)
+- LLM: Gemini → **Anthropic Claude**로 전환 (커밋 `ab18a51`, 쿼터 문제 회피 목적)
+- 관련 상세 내용: [refactoring-cleanup-analysis.md](./refactoring-cleanup-analysis.md)
 
 ---
 
-## 2. 시스템 구조도
-
-### 2.1 전체 데이터 플로우 (설계 목표)
+## 2. 전체 구조
 
 ```
-                      [나의 사관일지]
-
-                      │
-      ┌───────────────┼────────────────┐
-      │               │                │
-      ▼               ▼                ▼
- Git Commit      TIL(md)         AI Chat Log
-      │               │                │
-      └───────────────┼────────────────┘
-                      │
-                MemSearch(md)
-                      │
-                      ▼
-              [Collector Module]
-           (파일 읽기 / Git API 등)
-                      │
-                      ▼
-             문서 표준 포맷 변환
-         (date, source, content)
-                      │
-                      ▼
-              SQLite(or Postgres)
-             원본 문서 저장
-                      │
-                      ▼
-             Embedding Pipeline
-          (OpenAI / bge-m3 등)
-                      │
-                      ▼
-              Vector DB(Qdrant)
-                      │
-      ┌───────────────┼─────────────────┐
-      ▼               ▼                 ▼
- Day Summary    Week Summary     Month Summary
-      │               │                 │
-      └───────────────┼─────────────────┘
-                      ▼
-             LLM Summary Engine
-                      │
-                      ▼
-             Markdown 문서 생성
-          diary/day.md
-          diary/week.md
-          diary/month.md
-                      │
-                      ▼
-            Chat Recommendation
-       (못한 일 / 다음 행동 추천)
-```
-
-### 2.2 현재 구현된 아키텍처
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                        FastAPI Server                        │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐      │
-│  │   Router     │→ │ Controller   │→ │ LangGraph    │      │
-│  │ (API 엔드포인트)│  │ (비즈니스 로직) │  │   Agent      │      │
-│  └──────────────┘  └──────────────┘  └──────┬───────┘      │
-└─────────────────────────────────────────────┼──────────────┘
+                         ┌────────────────────────┐
+                         │     FastAPI (main.py)    │
+                         │  - init_db()             │
+                         │  - router 등록            │
+                         └────────────┬─────────────┘
+                                      │
+                         ┌────────────▼─────────────┐
+                         │      src/router.py        │
+                         │  (HTML 페이지 + REST API)  │
+                         └────────────┬─────────────┘
+                                      │
+                    ┌─────────────────┼──────────────────┐
+                    │                 │                  │
+                    ▼                 ▼                  ▼
+         ┌──────────────────┐ ┌──────────────┐  ┌──────────────────┐
+         │ storage/database  │ │ unified_     │  │  (레거시/버그 존재) │
+         │ storage/models    │ │ controller_  │  │  /sync_git_repo   │
+         │ storage/auth      │ │ single.py    │  │  엔드포인트        │
+         │  (SQLite, users.db)│ │ (LangGraph  │  └──────────────────┘
+         └──────────────────┘ │  단일 Agent) │
+                               └──────┬───────┘
+                                      │ bind_tools
+                    ┌─────────────────┼─────────────────┐
+                    ▼                 ▼                 ▼
+           tools/source.py     tools/embedding.py   tools/log.py
+           (소스 CRUD)          (임베딩 실행/상태)    (검색+일지 저장)
+                    │                 │                 │
+                    └────────┬────────┴────────┬────────┘
+                             ▼                 ▼
+                     SQLite (users.db)   ChromaDB (./chroma_db,
+                     Source/User 테이블    컬렉션명 user_{user_id})
                                               │
-                    ┌─────────────────────────┼─────────────────┐
-                    │                         │                 │
-                    ▼                         ▼                 ▼
-            ┌───────────────┐       ┌──────────────┐   ┌──────────────┐
-            │  Tools Layer  │       │  ChromaDB    │   │  Claude AI   │
-            │               │       │ (Vector DB)  │   │  (Sonnet 4.5)│
-            │ - embedding   │←─────→│              │   │              │
-            │ - retriever   │       │ - 벡터 검색   │   │ - 일지 생성  │
-            │ - maker_log   │       │ - 날짜 필터  │   │ - 내용 분석  │
-            └───────────────┘       └──────────────┘   └──────────────┘
-                    │                       │                   │
-                    └───────────────────────┴───────────────────┘
-                                            │
-                                            ▼
-                                  ┌──────────────────┐
-                                  │   Output Files   │
-                                  │                  │
-                                  │ logs/YYYY.MM.DD  │
-                                  │      _log.md     │
-                                  └──────────────────┘
+                                              ▼
+                                    Anthropic Claude (claude-sonnet-4-5)
+                                    HuggingFace 로컬 임베딩
+                                    (jhgan/ko-sroberta-multitask)
 ```
 
 ---
 
-## 3. 핵심 컴포넌트
+## 3. 계층별 컴포넌트
 
-### 3.1 API Layer (FastAPI)
+### 3.1 진입점 — `main.py`
+- FastAPI 앱 생성, 시작 시 `init_db()`로 SQLite 테이블 자동 생성
+- `src/router.py`의 `router`를 앱에 등록
 
-#### main.py
-- FastAPI 애플리케이션 진입점
-- Static 파일 서빙 (웹 UI)
-- 라우터 등록
+### 3.2 API/HTML 레이어 — `src/router.py`
+Jinja2 템플릿(`templates/`)과 REST API를 함께 제공하는 단일 라우터입니다.
 
-#### router.py
-- REST API 엔드포인트 정의
-  - `POST /call_agent`: AI 에이전트 호출 (일지 생성 요청)
-  - `POST /embed`: 파일/디렉토리 임베딩
-  - `POST /sync_git_repo`: Git 저장소 동기화 및 임베딩
+**활성 엔드포인트**
 
-### 3.2 Agent Layer (LangGraph)
+| Method | Path | 설명 |
+|---|---|---|
+| GET | `/` | 로그인 페이지 |
+| POST | `/login-form` | 로그인/자동 회원가입 → `/user/{user_id}`로 리다이렉트 |
+| GET | `/user/{user_id}` | 개인 페이지 (AI 어시스턴트 진입점) |
+| GET | `/user/{user_id}/settings` | 소스 목록 조회/삭제 페이지 |
+| POST | `/user/{user_id}/delete_source/{source_id}` | 소스 삭제 |
+| GET | `/log-maker` | Git 동기화 & 일지 생성 UI |
+| POST | `/unified_agent` | **메인 챗봇 엔드포인트** — `unified_agent()` 호출 |
+| POST | `/call_agent` | `/unified_agent`와 동일 로직(JSON body 방식). `log_maker.html`의 일지 생성 폼이 사용 |
+| POST | `/sync_git_repo` | Git 저장소 clone + 임베딩 (⚠️ 아래 "알려진 이슈" 참고) |
 
-#### controller.py
-- **LangGraph Agent 구현**
-  - StateGraph 기반 워크플로우
-  - Agent → Tools → Agent 순환 구조
-  - SystemMessage로 에이전트 동작 정의
+> `/source_manager`는 실제로 쓰이지 않아 2026-07-31 정리 작업에서 삭제되었습니다.
 
-- **Agent 동작 순서**
-  1. 사용자 요청 수신
-  2. retriever_vectordb 도구 호출 (날짜별 검색)
-  3. 검색 결과 분석 및 일지 작성
-  4. maker_logfile 도구 호출 (파일 저장)
+### 3.3 Agent 레이어 — `src/unified_controller_single.py`
+- LangGraph `StateGraph` 기반 단일 Agent (`agent` ↔ `tools` 순환 구조)
+- `InMemorySaver` checkpointer로 **user_id를 thread_id 삼아** 사용자별 대화 맥락 유지
+  (단, 인메모리이므로 **서버 재시작 시 대화 기록은 초기화됨**)
+- 사용자별로 `create_system_message(user_id)`가 담긴 그래프를 매 요청마다 새로 빌드
+- 바인딩된 8개 도구:
+  `add_source_to_db`, `get_user_sources`, `delete_source_from_db`,
+  `request_source_type_clarification`, `embed_source`, `get_embedding_status`,
+  `retriever_vectordb`, `maker_logfile`
+- 시스템 프롬프트에 "Git URL 추가 시 `add_source_to_db` → `embed_source` 연쇄 호출" 규칙을 명시해
+  Agent가 소스 등록과 임베딩을 자동으로 이어서 수행하도록 유도
 
-### 3.3 Tools Layer
+### 3.4 Tools 레이어 — `src/tools/`
 
-#### tools.py
-1. **embedding_file**
-   - 디렉토리의 문서 임베딩
-   - 지원 포맷: `.md`, `.txt`, `.json`, `.zip`
-   - 파일명에서 날짜 자동 추출 (정규식)
-   - Claude 대화 JSON 파싱 및 구조화
+| 파일 | 역할 |
+|---|---|
+| `source.py` | 소스 등록(`add_source_to_db`), 목록 조회, 삭제, 타입 안내. Git URL 정규식 검증 포함 |
+| `embedding.py` | 소스 타입별(`git`/`git_log`/`local`/`agent_chatlog`/`memsearch`) 파일 수집 → 청크 분할 → ChromaDB 저장. 파일 해시 기반 **증분 임베딩** 지원 |
+| `log.py` | 날짜 기반 ChromaDB 검색(`retriever_vectordb`, 메타데이터 필터 → 유사도 검색 폴백) 및 마크다운 일지 저장(`maker_logfile`) |
 
-2. **retriever_vectordb**
-   - 날짜 기반 벡터 검색
-   - 메타데이터 필터 우선 → 유사도 검색 폴백
-   - LLM 친화적 형식으로 결과 반환
-s
-3. **maker_logfile**
-   - 생성된 일지를 Markdown 파일로 저장
-   - 경로: `logs/YYYY.MM.DD_log.md`
+세부 사용 예시는 [tools-usage.md](./tools-usage.md), 소스 타입 판단 기준은
+[git-source-type-detection.md](./git-source-type-detection.md) 참고.
 
-### 3.4 LLM Router
+### 3.5 Storage 레이어 — `src/storage/`
+- `database.py`: SQLite(`users.db`) 엔진/세션, `init_db()`, FastAPI `Depends`용 `get_db()`
+- `models.py`: `User`(1) — `Source`(N) 관계. `Source`는 `type`(`SourceType` enum)과
+  `embedding_status`(`EmbeddingStatus` enum: pending/in_progress/completed/failed) 보유
+- `auth.py`: 비밀번호 없는 `user_id` 기반 로그인/자동 회원가입 (`login_or_register`)
 
-#### llm_router.py
-- **LLM 선택 및 관리**
-  - Claude Sonnet 4.5 (메인)
-  - Gemini (대안)
-  - Codex (실험적)
-
-- **ChromaDB 클라이언트 관리**
-  - 서버 모드 자동 감지 (HttpClient)
-  - 로컬 모드 폴백 (PersistentClient)
-
-- **Embedding 모델**
-  - HuggingFace `sentence-transformers/all-MiniLM-L6-v2`
-  - 로컬 실행 (무료)
+### 3.6 LLM/임베딩 설정 — `src/llm_router.py`
+- **LLM**: `ChatAnthropic(model="claude-sonnet-4-5-20250929")` — Agent가 실제 사용하는 유일한 LLM
+- Google Gemini(`gemini-2.5-flash-lite`)는 `GOOGLE_API_KEY`가 있을 때만 선택적으로 초기화되지만,
+  **현재 어떤 코드에서도 호출되지 않음** (예비용)
+- **임베딩**: HuggingFace `jhgan/ko-sroberta-multitask` (한국어 특화, 로컬 CPU 실행, 무료)
+- **벡터DB**: `chromadb.PersistentClient(path="./chroma_db")` — 로컬 파일 기반 모드로 고정 동작.
+  `CHROMADB_HOST`/`CHROMADB_PORT` 환경변수가 있지만 실제로는 참조되지 않아 서버 모드는 동작하지 않음
 
 ---
 
-## 4. 데이터 플로우
+## 4. 데이터 흐름
 
-### 4.1 Git 저장소 동기화
-
+### 4.1 로그인
 ```
-User Request
-    │
-    ▼
-POST /sync_git_repo
-    │
-    ├─ 1. Git Clone (shallow, branch 지정)
-    │     └─ repos/{user_id}/ 에 저장
-    │
-    ├─ 2. embedding_file_for_user() 호출
-    │     ├─ DirectoryLoader로 .md, .txt, .json 로드
-    │     ├─ 파일명에서 날짜 추출 (정규식)
-    │     ├─ 문서 내용에 날짜 정보 추가
-    │     └─ 메타데이터 설정
-    │
-    └─ 3. ChromaDB 저장
-          ├─ 컬렉션: user_{user_id}
-          ├─ Embedding: HuggingFace 로컬 모델
-          └─ 고유 ID 생성 (MD5 해시)
+사용자 → POST /login-form (user_id)
+       → login_or_register() : 있으면 로그인, 없으면 즉시 회원가입
+       → 303 리다이렉트 → GET /user/{user_id}
 ```
 
-### 4.2 일지 생성
-
+### 4.2 소스 추가 + 임베딩 (AI 어시스턴트, 정상 동작 경로)
 ```
-User: "2026년 7월 9일 일지 작성해줘"
-    │
-    ▼
-POST /call_agent
-    │
-    ▼
-LangGraph Agent
-    │
-    ├─ 1. retriever_vectordb 호출
-    │     ├─ 날짜 정규화: "2026-07-09"
-    │     ├─ 메타데이터 필터: where={"date": "2026-07-09"}
-    │     └─ 유사도 검색 폴백
-    │
-    ├─ 2. Claude AI 분석
-    │     ├─ 검색된 문서 내용 분석
-    │     ├─ 주요 활동 추출
-    │     ├─ 학습 내용 정리
-    │     └─ 마크다운 형식 일지 작성
-    │
-    └─ 3. maker_logfile 호출
-          └─ logs/2026.07.09_log.md 저장
+"https://github.com/user/til.git 추가해줘"
+    → POST /unified_agent (user_id, message)
+    → unified_agent() : LangGraph 실행
+        1) add_source_to_db 호출 → Source 레코드 생성 (SQLite)
+        2) 시스템 프롬프트 규칙에 따라 embed_source 자동 연쇄 호출
+             → 소스 타입별 파일 수집 (git: clone, git_log: git log, local: 로컬 경로)
+             → 파일 해시로 신규 문서만 필터링 (증분)
+             → RecursiveCharacterTextSplitter로 청크 분할
+             → ChromaDB 컬렉션 user_{user_id}에 저장
+    → 최종 응답 문자열 반환
 ```
 
-### 4.3 벡터 검색 전략
+### 4.3 일지 생성 (날짜 검색 → 저장)
+```
+"2026-07-30 일지 작성해줘"
+    → POST /unified_agent
+    → retriever_vectordb(date, reference_len, user_id)
+        1차: ChromaDB where={"date": ...} 메타데이터 필터
+        2차(실패 시): similarity_search 폴백
+    → Claude가 검색 결과를 분석해 마크다운 일지 작성
+    → maker_logfile(date, content) → logs/YYYY.MM.DD_log.md 저장
+```
 
+### 4.4 소스 삭제
 ```
-날짜 검색 요청
-    │
-    ▼
-1차: 메타데이터 필터 검색
-    ├─ reopened.get(where={"date": "YYYY-MM-DD"})
-    ├─ 정확한 날짜 매칭
-    └─ 성공 → 결과 반환
-    │
-    ▼ (실패 시)
-2차: 유사도 검색
-    ├─ reopened.similarity_search("작성 날짜: YYYY-MM-DD")
-    ├─ 임베딩 유사도 기반
-    └─ 결과 반환
+GET /user/{user_id}/settings → 소스 목록 표시
+POST /user/{user_id}/delete_source/{source_id} → DB에서 Source 삭제
 ```
+(주의: 이 경로는 SQLite 레코드만 삭제하며 ChromaDB에 이미 저장된 임베딩은 그대로 남습니다.
+ `tools/embedding.py`에는 `_delete_source_embeddings()` 헬퍼가 있지만 이 삭제 API에서 호출되지 않음)
 
 ---
 
 ## 5. 기술 스택
 
-### Backend
-- **FastAPI**: 웹 서버 & REST API
-- **LangGraph**: AI Agent 워크플로우 (StateGraph)
-- **LangChain**: LLM 추상화 및 도구 통합
-
-### AI/ML
-- **Claude Sonnet 4.5**: LLM (Anthropic)
-  - 최고 성능 + 안정적인 tool calling
-- **HuggingFace Transformers**: 로컬 임베딩 모델
-  - `sentence-transformers/all-MiniLM-L6-v2`
-
-### Database
-- **ChromaDB**: 벡터 데이터베이스
-  - 서버 모드 지원 (다중 사용자)
-  - 로컬 모드 폴백
-  - 메타데이터 필터링
-
-### Data Processing
-- **LangChain Document Loaders**
-  - DirectoryLoader
-  - TextLoader (md, txt)
-  - JSONLoader (Claude 대화 내역)
-
-### Deployment
-- **Docker**: ChromaDB 서버 컨테이너화
-- **uvicorn**: ASGI 서버
+| 영역 | 사용 기술 |
+|---|---|
+| 웹 서버 | FastAPI + Jinja2Templates + uvicorn |
+| Agent 워크플로우 | LangGraph `StateGraph` (단일 Agent, ToolNode) |
+| LLM | Anthropic Claude Sonnet 4.5 |
+| 임베딩 모델 | HuggingFace `jhgan/ko-sroberta-multitask` (로컬 CPU) |
+| 벡터DB | ChromaDB (로컬 persistent, `./chroma_db`) |
+| 메타DB | SQLite (`users.db`) + SQLAlchemy ORM |
+| 배포 | Docker (`Dockerfile`, `docker-compose*.yml`), GitHub Actions → ECR → EC2(SSM) |
 
 ---
 
-## 6. 주요 설계 결정
-
-### 6.1 왜 LangGraph를 사용했는가?
-- **도구 호출 자동화**: Agent가 필요한 도구를 자율적으로 선택
-- **상태 관리**: MessagesState로 대화 컨텍스트 유지
-- **순환 워크플로우**: Agent ↔ Tools 무한 반복 가능
-
-### 6.2 왜 ChromaDB를 선택했는가?
-- **간단한 설정**: Python native, 별도 서버 불필요 (로컬 모드)
-- **메타데이터 필터링**: 날짜 기반 정확한 검색
-- **서버 모드 지원**: 다중 사용자 동시 접근 가능
-
-### 6.3 날짜 추출 전략
-- **파일명 기반 정규식**: `YYYY_MM_DD`, `YYYY-MM-DD`, `YYYY년 MM월 DD일`
-- **문서 내용에 날짜 추가**: 벡터 검색 정확도 향상
-- **메타데이터 저장**: 정확한 날짜 필터링
-
-### 6.4 사용자별 컬렉션 분리
-- **컬렉션 네이밍**: `user_{user_id}`
-- **데이터 격리**: 사용자 간 검색 결과 혼재 방지
-- **확장성**: 다중 사용자 지원
-
----
-
-## 7. 디렉토리 구조
+## 6. 디렉토리 구조 (현재)
 
 ```
-yuta_bot/
-├── main.py                   # FastAPI 앱 진입점
+yuta_logagent/
+├── main.py
 ├── src/
-│   ├── router.py            # API 엔드포인트
-│   ├── controller.py        # LangGraph Agent
-│   ├── tools.py             # LangChain Tools
-│   └── llm_router.py        # LLM & ChromaDB 설정
-├── static/                  # 웹 UI
-│   └── index.html
-├── logs/                    # 생성된 일지 저장
-│   └── YYYY.MM.DD_log.md
-├── repos/                   # Git 동기화된 저장소
-│   └── {user_id}/
-├── chroma_db/              # ChromaDB 로컬 데이터
+│   ├── router.py                  # HTML 페이지 + REST API
+│   ├── unified_controller_single.py  # LangGraph 단일 Agent
+│   ├── llm_router.py               # LLM / 임베딩 / ChromaDB 설정
+│   ├── tools/
+│   │   ├── source.py               # 소스 CRUD
+│   │   ├── embedding.py            # 임베딩 실행
+│   │   └── log.py                  # 검색 + 일지 저장
+│   └── storage/
+│       ├── database.py             # SQLite 엔진/세션
+│       ├── models.py               # User, Source 모델
+│       └── auth.py                 # 로그인/회원가입
+├── templates/                      # login, user_page, settings, log_maker
+├── logs/                           # 생성된 일지 (YYYY.MM.DD_log.md)
+├── data/sources/                   # Git clone/로컬 소스 원본 파일
+├── chroma_db/                      # ChromaDB 로컬 데이터
+├── backups/                        # DB 백업 (users.db.backup_*)
+├── scripts/                        # 배포/운영 스크립트
+├── tests/                          # (현재 비어있는 pytest 스캐폴드)
+├── check_embeddings.py, reset_db.py,
+│   test_date_search.py, test_log_tools.py  # 개발/디버깅용 실행 스크립트 (pytest 아님)
 └── docs/
-    ├── ARCHITECTURE.md     # 이 문서
-    ├── SETUP.md
-    └── aidocs/
-        └── CHROMADB_SERVER_SETUP.md
 ```
 
 ---
 
-## 8. 향후 개선 방향 (설계 목표)
+## 7. 알려진 이슈 (2026-07-31 검증 중 발견)
 
-### 8.1 데이터 수집 확장
-현재는 Git 저장소의 TIL 마크다운만 수집하지만, 향후 다음 소스를 추가:
+이번 정리 작업 중 코드를 직접 대조 검증하며 발견한, 아직 해결되지 않은 문제입니다.
 
-- **Git Commit 이력**: Git API를 통한 커밋 메시지 수집
-- **MemSearch 통합**: 기존 검색 기록 활용
-- **AI Chat Log**: Claude, GPT, Gemini 대화 이력 자동 수집
+1. **`/sync_git_repo` 사용 불가 상태**
+   `src/router.py`의 `/sync_git_repo` 핸들러가 `from tools import embedding_file_for_user`를
+   import하는데, 이 함수는 코드베이스 어디에도 존재하지 않습니다(레거시 흔적으로 추정).
+   `log_maker.html`의 "Git 동기화" 폼이 이 엔드포인트를 실제로 호출하지만, 매 요청마다
+   저장소를 clone한 뒤 import 실패로 `{"success": false}`를 반환할 것으로 보입니다.
+   → 소스 등록/임베딩은 현재 `/unified_agent` 대화형 경로(4.2)로만 정상 동작합니다.
 
-### 8.2 데이터베이스 이중화
+2. **`/call_agent`의 요청 필드 불일치**
+   `log_maker.html`의 일지 생성 폼이 `/call_agent`에 `{req, thread_id}` 형태로 body를 보내지만,
+   서버는 `QueryReq(message, user_id)`를 기대합니다. 필드명이 맞지 않아 항상 422 오류가
+   발생할 가능성이 높습니다.
 
-```
-원본 문서 저장: SQLite or Postgres
-    │
-    ├─ 문서 메타데이터 (id, date, source, type)
-    ├─ 원본 텍스트 (content)
-    └─ 편집 이력 추적
-    │
-    ▼
-임베딩 저장: ChromaDB → Qdrant
-    │
-    ├─ 벡터 임베딩 (OpenAI or bge-m3)
-    ├─ 유사도 검색
-    └─ 대규모 확장성
-```
-
-**이점**:
-- 원본 데이터 영구 보존 (SQL)
-- 빠른 벡터 검색 (Qdrant)
-- 데이터 복구 및 재임베딩 가능
-
-### 8.3 다단계 요약 시스템
-
-```
-Daily Summary (매일 자정)
-    ├─ 당일 모든 기록 수집
-    ├─ LLM 요약 (Claude)
-    └─ diary/YYYY-MM-DD.md 생성
-    │
-    ▼
-Weekly Summary (매주 일요일)
-    ├─ 지난 7일 Daily Summary 통합
-    ├─ 주간 학습 패턴 분석
-    └─ diary/week/YYYY-WW.md 생성
-    │
-    ▼
-Monthly Summary (매월 말일)
-    ├─ 지난 한 달 Weekly Summary 통합
-    ├─ 월간 성장 지표 생성
-    └─ diary/month/YYYY-MM.md 생성
-```
-
-### 8.4 행동 추천 시스템
-
-```
-못한 일 추적
-    ├─ TODO 항목 자동 추출
-    ├─ 미완료 작업 우선순위 산정
-    └─ 알림/리마인더
-    │
-    ▼
-다음 행동 추천
-    ├─ 학습 패턴 분석 (ML)
-    ├─ 성장 방향 제시
-    └─ 커리큘럼 자동 생성
-```
-
-### 8.5 임베딩 모델 업그레이드
-
-- **현재**: HuggingFace `all-MiniLM-L6-v2` (로컬, 무료)
-- **향후 옵션**:
-  - OpenAI `text-embedding-3-small` (성능 향상)
-  - `bge-m3` (다국어 지원)
-  - Cohere (재랭킹)
-
-### 8.6 벡터 DB 마이그레이션
-
-- **현재**: ChromaDB (간단, Python native)
-- **향후**: Qdrant
-  - 더 빠른 검색 속도
-  - 클라우드 배포 용이
-  - 고급 필터링 기능
+이 두 항목은 이번 정리 작업 범위 밖이라 코드는 그대로 두었습니다. 상세 논의는
+[refactoring-cleanup-analysis.md](./refactoring-cleanup-analysis.md)를 참고하세요.
 
 ---
 
-## 9. 보안 및 확장성 고려사항
-
-### 9.1 보안
-- **API 키 관리**: `.env` 파일 (git ignore)
-- **사용자 인증**: 향후 OAuth 2.0 통합
-- **Private Repo 지원**: GitHub Token 인증
-
-### 9.2 확장성
-- **다중 사용자**: 컬렉션 분리 (이미 구현)
-- **비동기 처리**: FastAPI 비동기 엔드포인트
-- **캐싱**: 벡터 검색 결과 캐싱 (Redis)
-
-### 9.3 모니터링
-- **로깅**: 각 레이어별 디버그 로그
-- **메트릭**: 응답 시간, 임베딩 성능
-- **에러 트래킹**: Sentry 통합 (향후)
-
----
-
-## 10. 참고 문서
-
-- [SETUP.md](../SETUP.md): 설치 및 실행 가이드
-- [docs/aidocs/CHROMADB_SERVER_SETUP.md](./aidocs/CHROMADB_SERVER_SETUP.md): ChromaDB 서버 모드 설정
-- [README.md](../README.md): 프로젝트 개요 및 사용법
-
----
-
-## 문서 히스토리
-- **2026-07-19**: 초안 작성 (설계 목표 및 현재 구현 상태 문서화)
+## 8. 참고 문서
+- [refactoring-cleanup-analysis.md](./refactoring-cleanup-analysis.md) — 리팩토링 후 정리 내역
+- [tools-usage.md](./tools-usage.md) — 소스/임베딩 도구 사용 예시
+- [git-source-type-detection.md](./git-source-type-detection.md) — GIT vs GIT_LOG 판단 기준
+- [cicd-setup.md](./cicd-setup.md) — CI/CD 파이프라인 설정
+- [docs/정리/](./정리/) — 이전 초안 문서 보관 (Router 방식 시절 등, 참고용)

@@ -146,15 +146,6 @@ async def unified_agent_endpoint(user_id: str = Form(...), message: str = Form(.
     res = controller.unified_agent(user_id, message)
     return {"response": res}
 
-@router.post("/source_manager")
-async def source_manager(user_id: str = Form(...), message: str = Form(...)):
-    """
-    소스 관리 대화형 Agent (레거시)
-    - 사용자와 대화하면서 소스 추가/조회/삭제
-    """
-    res = controller.source_manager(user_id, message)
-    return {"response": res}
-
 # 새로운 엔드포인트: Git 저장소 동기화
 @router.post("/sync_git_repo")
 async def sync_git_repo(req: GitSyncReq):
