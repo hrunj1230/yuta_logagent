@@ -5,6 +5,7 @@ from langchain_core.documents import Document
 from ..storage.database import SessionLocal
 from ..storage.models import Source, SourceType, EmbeddingStatus
 from ..llm_router import local_embedding
+from .ingest_rules import git_file_dates, normalize_date, resolve_date, should_collect
 import os
 import hashlib
 import subprocess
@@ -18,7 +19,9 @@ CHUNK_SIZE = 2000
 CHUNK_OVERLAP = 400
 DATA_DIR = Path("./data/sources")
 CHROMA_DIR = Path("./chroma_db")
-TEXT_EXTENSIONS = {".txt", ".md", ".py", ".js", ".tsx", ".jsx", ".java", ".go", ".rs", ".c", ".cpp", ".h"}
+
+# 커밋 하나당 변경 요약에 나열할 최대 파일 수 (대량 변경 커밋의 볼륨 억제)
+MAX_FILES_PER_COMMIT = 20
 
 
 def _get_chroma_collection(user_id: str):
@@ -126,7 +129,74 @@ def _filter_new_documents(documents: list[Document], user_id: str, source_id: in
     return new_docs, skipped
 
 
-def _collect_git_files(source: Source, user_id: str) -> list[Document]:
+def _collect_documents(
+    root: Path,
+    source: Source,
+    user_id: str,
+    source_type: str,
+    git_dates: dict[str, str] | None = None,
+    allow_mtime: bool = False,
+) -> tuple[list[Document], dict[str, int]]:
+    """
+    디렉토리를 순회하며 수집 대상 문서를 Document 로 변환한다.
+
+    수집 규칙(확장자/제외 디렉토리/크기)과 날짜 추출은 ingest_rules 에 위임한다.
+    날짜를 확정할 수 없는 문서는 일지 시스템의 대상이 아니므로 제외한다.
+
+    Returns:
+        (문서 목록, {제외 사유: 건수})
+    """
+    documents: list[Document] = []
+    skipped: dict[str, int] = {}
+
+    def note(reason: str):
+        skipped[reason] = skipped.get(reason, 0) + 1
+
+    for file_path in root.rglob("*"):
+        ok, reason = should_collect(file_path, root)
+        if not ok:
+            if reason != "not_a_file":
+                note(reason)
+            continue
+
+        try:
+            content = file_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as e:
+            print(f"파일 읽기 실패 {file_path}: {e}")
+            note("read_failed")
+            continue
+
+        rel_path = file_path.relative_to(root)
+        doc_date, date_origin = resolve_date(
+            rel_path=rel_path,
+            content=content,
+            git_dates=git_dates,
+            abs_path=file_path if allow_mtime else None,
+        )
+
+        if not doc_date:
+            note("no_date")
+            continue
+
+        documents.append(Document(
+            page_content=content,
+            metadata={
+                "user_id": user_id,
+                "source_id": source.id,
+                "source_type": source_type,
+                "source_name": source.name,
+                "file_path": str(rel_path),
+                "file_hash": hashlib.sha256(content.encode()).hexdigest(),
+                "date": doc_date,
+                "date_origin": date_origin,
+                "embedded_at": datetime.now().isoformat(),
+            }
+        ))
+
+    return documents, skipped
+
+
+def _collect_git_files(source: Source, user_id: str) -> tuple[list[Document], dict[str, int]]:
     """Git 저장소를 clone하고 텍스트 파일 수집"""
     repo_dir = DATA_DIR / user_id / source.name
 
@@ -151,40 +221,18 @@ def _collect_git_files(source: Source, user_id: str) -> list[Document]:
         if result.returncode != 0:
             raise RuntimeError(f"Git clone 실패: {result.stderr}")
 
-    # 텍스트 파일 수집
-    documents = []
+    # 파일별 최종 커밋 날짜를 한 번에 조회 (문서 날짜의 3순위 근거)
+    git_dates = git_file_dates(repo_dir)
 
-    for file_path in repo_dir.rglob("*"):
-        if file_path.is_file() and file_path.suffix in TEXT_EXTENSIONS:
-            try:
-                with open(file_path, "r", encoding="utf-8") as f:
-                    content = f.read()
-
-                # 파일 해시 계산
-                file_hash = hashlib.sha256(content.encode()).hexdigest()
-
-                # 상대 경로
-                rel_path = file_path.relative_to(repo_dir)
-
-                doc = Document(
-                    page_content=content,
-                    metadata={
-                        "user_id": user_id,
-                        "source_id": source.id,
-                        "source_type": source.type.value,
-                        "source_name": source.name,
-                        "file_path": str(rel_path),
-                        "file_hash": file_hash,
-                        "embedded_at": datetime.now().isoformat()
-                    }
-                )
-                documents.append(doc)
-
-            except Exception as e:
-                print(f"파일 읽기 실패 {file_path}: {e}")
-                continue
-
-    return documents
+    documents, skipped = _collect_documents(
+        root=repo_dir,
+        source=source,
+        user_id=user_id,
+        source_type=source.type.value,
+        git_dates=git_dates,
+        allow_mtime=False,  # git 소스는 커밋 날짜가 있으므로 mtime까지 내려가지 않는다
+    )
+    return documents, skipped
 
 
 def _collect_git_log(source: Source, user_id: str) -> list[Document]:
@@ -202,9 +250,16 @@ def _collect_git_log(source: Source, user_id: str) -> list[Document]:
         if result.returncode != 0:
             raise RuntimeError(f"Git clone 실패: {result.stderr}")
 
-    # Git log 가져오기
+    # 커밋 메타데이터와 파일별 변경량(--numstat)을 한 번에 조회한다.
+    # raw diff 본문(+/- 라인)은 임베딩 품질이 낮고 볼륨이 크므로 수집하지 않고,
+    # '어떤 파일이 얼마나 바뀌었는지'만 구조화해 남긴다.
+    marker = "__C__"
     result = subprocess.run(
-        ["git", "-C", str(repo_dir), "log", "--pretty=format:%H|%an|%ad|%s", "--date=iso"],
+        [
+            # core.quotepath=false: 한글 경로가 8진수로 이스케이프되는 것을 방지
+            "git", "-C", str(repo_dir), "-c", "core.quotepath=false", "log",
+            f"--pretty=format:{marker}%H|%an|%ad|%s", "--date=short", "--numstat",
+        ],
         capture_output=True,
         text=True
     )
@@ -212,84 +267,145 @@ def _collect_git_log(source: Source, user_id: str) -> list[Document]:
     if result.returncode != 0:
         raise RuntimeError(f"Git log 실패: {result.stderr}")
 
+    commits: list[dict] = []
+    for line in result.stdout.splitlines():
+        if line.startswith(marker):
+            parts = line[len(marker):].split("|", 3)
+            if len(parts) != 4:
+                continue
+            sha, author, raw_date, message = parts
+            commits.append({
+                "sha": sha,
+                "author": author,
+                "date": normalize_date(raw_date),
+                "message": message,
+                "files": [],
+                "added": 0,
+                "deleted": 0,
+            })
+        elif line.strip() and commits:
+            # numstat 형식: "추가\t삭제\t경로" (바이너리는 "-\t-\t경로")
+            cols = line.split("\t")
+            if len(cols) < 3:
+                continue
+            added, deleted, path = cols[0], cols[1], cols[2]
+            n_add = int(added) if added.isdigit() else 0
+            n_del = int(deleted) if deleted.isdigit() else 0
+            current = commits[-1]
+            current["added"] += n_add
+            current["deleted"] += n_del
+            current["files"].append((path, n_add, n_del))
+
     documents = []
-    for line in result.stdout.strip().split("\n"):
-        if not line:
+    for commit in commits:
+        if not commit["date"]:
+            # 날짜가 없는 커밋은 일지에 배치할 수 없다
             continue
 
-        parts = line.split("|", 3)
-        if len(parts) != 4:
-            continue
+        files = commit["files"]
+        lines = [
+            f"[{commit['date']}] {commit['message']}",
+            f"작성자: {commit['author']}",
+            f"변경: {len(files)}개 파일 (+{commit['added']} / -{commit['deleted']})",
+        ]
+        for path, n_add, n_del in files[:MAX_FILES_PER_COMMIT]:
+            lines.append(f"- {path} (+{n_add}/-{n_del})")
+        if len(files) > MAX_FILES_PER_COMMIT:
+            lines.append(f"- ... 외 {len(files) - MAX_FILES_PER_COMMIT}개 파일")
 
-        sha, author, date, message = parts
-
-        content = f"Commit: {message}\nAuthor: {author}\nDate: {date}"
-
-        doc = Document(
-            page_content=content,
+        documents.append(Document(
+            page_content="\n".join(lines),
             metadata={
                 "user_id": user_id,
                 "source_id": source.id,
                 "source_type": "git_log",
                 "source_name": source.name,
-                "commit_sha": sha,
-                "author": author,
-                "date": date,
-                "message": message,
+                "commit_sha": commit["sha"],
+                "author": commit["author"],
+                "date": commit["date"],
+                "date_origin": "git",
+                "message": commit["message"],
+                "files_changed": len(files),
+                "lines_added": commit["added"],
+                "lines_deleted": commit["deleted"],
                 "embedded_at": datetime.now().isoformat()
             }
-        )
-        documents.append(doc)
+        ))
 
-    return documents
+    return documents, {}
 
 
-def _collect_local_files(source: Source, user_id: str) -> list[Document]:
-    """로컬 디렉토리의 텍스트 파일 수집"""
+def _collect_local_files(source: Source, user_id: str) -> tuple[list[Document], dict[str, int]]:
+    """로컬 디렉토리의 문서 파일 수집"""
     local_path = Path(source.location)
 
     if not local_path.exists():
         raise FileNotFoundError(f"로컬 경로가 존재하지 않습니다: {source.location}")
 
-    documents = []
+    # 로컬 경로가 git 저장소라면 커밋 날짜도 날짜 근거로 활용한다
+    git_dates = git_file_dates(local_path) if (local_path / ".git").exists() else {}
 
-    for file_path in local_path.rglob("*"):
-        if file_path.is_file() and file_path.suffix in TEXT_EXTENSIONS:
+    return _collect_documents(
+        root=local_path,
+        source=source,
+        user_id=user_id,
+        source_type="local",
+        git_dates=git_dates,
+        allow_mtime=True,  # 로컬 소스는 커밋 이력이 없을 수 있어 mtime을 최후 수단으로 허용
+    )
+
+
+def _collect_chatlog(source: Source, user_id: str) -> tuple[list[Document], dict[str, int]]:
+    """에이전트 대화 로그 수집 (추후 구현)"""
+    return [], {}
+
+
+def _collect_memsearch(source: Source, user_id: str) -> tuple[list[Document], dict[str, int]]:
+    """Memsearch 데이터 수집 (추후 구현)"""
+    return [], {}
+
+
+def _delete_stale_chunks(user_id: str, source_id: int, documents: list[Document]) -> int:
+    """
+    갱신 대상 문서의 기존 청크를 미리 삭제한다 (delete-then-insert).
+
+    파일이 수정되면 해시가 달라져 새 문서로 저장되는데, 이전 해시의 청크를
+    지우지 않으면 같은 파일의 옛 내용이 벡터DB에 계속 남아 검색에 섞인다.
+
+    Returns:
+        삭제된 청크 수
+    """
+    keys = {
+        doc.metadata.get("file_path") or doc.metadata.get("commit_sha")
+        for doc in documents
+    }
+    keys.discard(None)
+    if not keys:
+        return 0
+
+    try:
+        collection = _get_chroma_collection(user_id)
+    except Exception as e:
+        print(f"기존 청크 삭제 준비 실패: {e}")
+        return 0
+
+    deleted = 0
+    for key in keys:
+        for field in ("file_path", "commit_sha"):
             try:
-                with open(file_path, "r", encoding="utf-8") as f:
-                    content = f.read()
-
-                file_hash = hashlib.sha256(content.encode()).hexdigest()
-                rel_path = file_path.relative_to(local_path)
-
-                doc = Document(
-                    page_content=content,
-                    metadata={
-                        "user_id": user_id,
-                        "source_id": source.id,
-                        "source_type": "local",
-                        "source_name": source.name,
-                        "file_path": str(rel_path),
-                        "file_hash": file_hash,
-                        "embedded_at": datetime.now().isoformat()
-                    }
-                )
-                documents.append(doc)
-            except Exception as e:
-                print(f"파일 읽기 실패 {file_path}: {e}")
+                found = collection.get(where={"$and": [
+                    {"source_id": source_id},
+                    {field: key},
+                ]})
+            except Exception:
                 continue
 
-    return documents
+            ids = found.get("ids", [])
+            if ids:
+                collection.delete(ids=ids)
+                deleted += len(ids)
 
-
-def _collect_chatlog(source: Source, user_id: str) -> list[Document]:
-    """에이전트 대화 로그 수집 (추후 구현)"""
-    return []
-
-
-def _collect_memsearch(source: Source, user_id: str) -> list[Document]:
-    """Memsearch 데이터 수집 (추후 구현)"""
-    return []
+    return deleted
 
 
 def _process_source_by_type(source: Source, user_id: str) -> dict:
@@ -298,20 +414,23 @@ def _process_source_by_type(source: Source, user_id: str) -> dict:
 
     # 소스 타입별 파일 수집
     if source.type == SourceType.GIT:
-        documents = _collect_git_files(source, user_id)
+        documents, skip_reasons = _collect_git_files(source, user_id)
     elif source.type == SourceType.GIT_LOG:
-        documents = _collect_git_log(source, user_id)
+        documents, skip_reasons = _collect_git_log(source, user_id)
     elif source.type == SourceType.LOCAL:
-        documents = _collect_local_files(source, user_id)
+        documents, skip_reasons = _collect_local_files(source, user_id)
     elif source.type == SourceType.AGENT_CHATLOG:
-        documents = _collect_chatlog(source, user_id)
+        documents, skip_reasons = _collect_chatlog(source, user_id)
     elif source.type == SourceType.MEMSEARCH:
-        documents = _collect_memsearch(source, user_id)
+        documents, skip_reasons = _collect_memsearch(source, user_id)
     else:
         raise ValueError(f"지원하지 않는 소스 타입: {source.type}")
 
-    # 증분 업데이트 (기존 임베딩 확인)
-    new_docs, skipped_count = _filter_new_documents(documents, user_id, source.id)
+    # 증분 업데이트 (내용이 바뀌지 않은 문서는 건너뜀)
+    new_docs, unchanged_count = _filter_new_documents(documents, user_id, source.id)
+
+    # 갱신되는 문서의 옛 청크를 먼저 제거한다
+    stale_deleted = _delete_stale_chunks(user_id, source.id, new_docs)
 
     # 청크 분할
     chunks = _split_documents(new_docs)
@@ -324,10 +443,12 @@ def _process_source_by_type(source: Source, user_id: str) -> dict:
 
     return {
         "stats": {
-            "files_processed": len(documents),
+            "files_collected": len(documents),
+            "files_skipped": sum(skip_reasons.values()),
+            "skip_reasons": skip_reasons,
+            "files_unchanged": unchanged_count,
             "chunks_created": len(chunks),
-            "new_chunks": len(chunks),
-            "skipped_chunks": skipped_count,
+            "stale_chunks_deleted": stale_deleted,
             "duration_seconds": round(duration, 2)
         }
     }
@@ -371,12 +492,22 @@ def embed_source(user_id: str, source_id: int) -> str:
             source.embedding_error = None
             db.commit()
 
-            return f"""✅ 임베딩 완료: {source.name}
-- 처리된 파일: {result['stats']['files_processed']}개
-- 생성된 청크: {result['stats']['chunks_created']}개
-- 소요 시간: {result['stats']['duration_seconds']}초
-- 새로 추가: {result['stats']['new_chunks']}개
-- 스킵: {result['stats']['skipped_chunks']}개"""
+            stats = result["stats"]
+            summary = f"""✅ 임베딩 완료: {source.name}
+- 수집된 문서: {stats['files_collected']}개
+- 생성된 청크: {stats['chunks_created']}개
+- 변경 없어 건너뜀: {stats['files_unchanged']}개
+- 제외된 파일: {stats['files_skipped']}개
+- 정리된 옛 청크: {stats['stale_chunks_deleted']}개
+- 소요 시간: {stats['duration_seconds']}초"""
+
+            if stats["skip_reasons"]:
+                top = sorted(stats["skip_reasons"].items(), key=lambda x: -x[1])[:5]
+                summary += "\n\n제외 사유:\n" + "\n".join(
+                    f"  - {reason}: {count}개" for reason, count in top
+                )
+
+            return summary
 
         except Exception as e:
             # 실패 처리
@@ -425,8 +556,9 @@ def get_embedding_status(user_id: str, source_id: int) -> str:
         if source.embedding_stats:
             stats = json.loads(source.embedding_stats)
             result += f"\n통계:\n"
-            result += f"- 처리된 파일: {stats.get('files_processed', 0)}개\n"
+            result += f"- 수집된 문서: {stats.get('files_collected', 0)}개\n"
             result += f"- 생성된 청크: {stats.get('chunks_created', 0)}개\n"
+            result += f"- 제외된 파일: {stats.get('files_skipped', 0)}개\n"
 
         if source.embedding_status == EmbeddingStatus.FAILED and source.embedding_error:
             result += f"\n⚠️ 오류: {source.embedding_error}"

@@ -1,0 +1,1165 @@
+<title>임베딩 파이프라인 수정 — 변경 내용 해설</title>
+
+<style>
+  :root {
+    --paper:      #F4F6F5;
+    --paper-sunk: #EAEEEC;
+    --card:       #FFFFFF;
+    --ink:        #1A211F;
+    --ink-soft:   #3D4844;
+    --muted:      #6B7873;
+    --rule:       #D6DEDA;
+    --celadon:    #3F6F63;
+    --celadon-dim:#7FA69B;
+    --celadon-wash:#E4EDEA;
+    --seal:       #A83A2E;
+    --seal-dim:   #C97C71;
+    --seal-wash:  #F6E7E4;
+    --code-bg:    #EDF1EF;
+
+    --f-kr: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Pretendard",
+            "Noto Sans KR", "Malgun Gothic", "맑은 고딕", sans-serif;
+    --f-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper:      #101614;
+      --paper-sunk: #0B100F;
+      --card:       #171F1C;
+      --ink:        #E3EAE7;
+      --ink-soft:   #B9C5C0;
+      --muted:      #879791;
+      --rule:       #2A3733;
+      --celadon:    #7FBFAC;
+      --celadon-dim:#4E7F72;
+      --celadon-wash:#1A2A26;
+      --seal:       #E2857A;
+      --seal-dim:   #94443B;
+      --seal-wash:  #2A1A18;
+      --code-bg:    #0D1312;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --paper:      #101614;
+    --paper-sunk: #0B100F;
+    --card:       #171F1C;
+    --ink:        #E3EAE7;
+    --ink-soft:   #B9C5C0;
+    --muted:      #879791;
+    --rule:       #2A3733;
+    --celadon:    #7FBFAC;
+    --celadon-dim:#4E7F72;
+    --celadon-wash:#1A2A26;
+    --seal:       #E2857A;
+    --seal-dim:   #94443B;
+    --seal-wash:  #2A1A18;
+    --code-bg:    #0D1312;
+  }
+
+  :root[data-theme="light"] {
+    --paper:      #F4F6F5;
+    --paper-sunk: #EAEEEC;
+    --card:       #FFFFFF;
+    --ink:        #1A211F;
+    --ink-soft:   #3D4844;
+    --muted:      #6B7873;
+    --rule:       #D6DEDA;
+    --celadon:    #3F6F63;
+    --celadon-dim:#7FA69B;
+    --celadon-wash:#E4EDEA;
+    --seal:       #A83A2E;
+    --seal-dim:   #C97C71;
+    --seal-wash:  #F6E7E4;
+    --code-bg:    #EDF1EF;
+  }
+
+  html { -webkit-text-size-adjust: 100%; }
+
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--f-kr);
+    font-size: 16px;
+    line-height: 1.8;
+    word-break: keep-all;
+    overflow-wrap: anywhere;
+  }
+
+  .wrap {
+    max-width: 62rem;
+    margin: 0 auto;
+    padding: 0 1.5rem 6rem;
+  }
+
+  .col {
+    max-width: 40rem;
+  }
+
+  /* ---------- 공통 텍스트 ---------- */
+
+  h1, h2, h3 { text-wrap: balance; margin: 0; }
+
+  .eyebrow {
+    font-family: var(--f-mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  p { margin: 0; }
+
+  strong { font-weight: 700; color: var(--ink); }
+
+  code {
+    font-family: var(--f-mono);
+    font-size: 0.86em;
+    background: var(--code-bg);
+    padding: 0.12em 0.38em;
+    border-radius: 3px;
+    color: var(--ink);
+  }
+
+  a { color: var(--celadon); }
+
+  /* ---------- 헤더 ---------- */
+
+  header {
+    border-bottom: 1px solid var(--rule);
+    padding: 4.5rem 0 2.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+  }
+
+  header h1 {
+    font-size: clamp(1.9rem, 5vw, 2.9rem);
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    line-height: 1.25;
+  }
+
+  .lede {
+    font-size: 1.06rem;
+    color: var(--ink-soft);
+    max-width: 38rem;
+  }
+
+  .meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 1.75rem;
+    font-family: var(--f-mono);
+    font-size: 0.76rem;
+    color: var(--muted);
+    padding-top: 0.5rem;
+    border-top: 1px solid var(--rule);
+  }
+
+  /* ---------- 섹션 ---------- */
+
+  section {
+    padding-top: 4rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+  }
+
+  .sec-head {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+  }
+
+  .sec-head h2 {
+    font-size: clamp(1.3rem, 3vw, 1.65rem);
+    font-weight: 700;
+    letter-spacing: -0.015em;
+  }
+
+  .sec-head p {
+    color: var(--ink-soft);
+    max-width: 40rem;
+  }
+
+  /* ---------- 요약 수치 ---------- */
+
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+    gap: 1px;
+    background: var(--rule);
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+
+  .stat {
+    background: var(--card);
+    padding: 1.25rem 1.25rem 1.4rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .stat-label {
+    font-family: var(--f-mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  .stat-move {
+    display: flex;
+    align-items: baseline;
+    gap: 0.45rem;
+    font-family: var(--f-mono);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .stat-before {
+    font-size: 1rem;
+    color: var(--seal);
+    text-decoration: line-through;
+    text-decoration-thickness: 1px;
+  }
+
+  .stat-arrow { color: var(--muted); font-size: 0.8rem; }
+
+  .stat-after {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--celadon);
+    letter-spacing: -0.01em;
+  }
+
+  .stat-note { font-size: 0.82rem; color: var(--muted); line-height: 1.5; }
+
+  /* ---------- 원인 사슬 ---------- */
+
+  .chain {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    background: var(--card);
+    overflow: hidden;
+  }
+
+  .link {
+    display: grid;
+    grid-template-columns: 4.5rem 1fr;
+    gap: 1rem;
+    padding: 1.15rem 1.35rem;
+    align-items: start;
+  }
+
+  .link + .link { border-top: 1px solid var(--rule); }
+
+  .link-id {
+    font-family: var(--f-mono);
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: var(--seal);
+    background: var(--seal-wash);
+    border-radius: 3px;
+    padding: 0.15rem 0;
+    text-align: center;
+    letter-spacing: 0.04em;
+  }
+
+  .link-body { display: flex; flex-direction: column; gap: 0.3rem; }
+  .link-body h3 { font-size: 1rem; font-weight: 700; }
+  .link-body p { font-size: 0.93rem; color: var(--ink-soft); }
+
+  .chain-out {
+    background: var(--celadon-wash);
+    border-top: 1px solid var(--rule);
+    padding: 1.15rem 1.35rem;
+    font-size: 0.95rem;
+    color: var(--ink-soft);
+  }
+
+  .chain-out strong { color: var(--celadon); }
+
+  /* ---------- 파일 지도 ---------- */
+
+  .files {
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    background: var(--card);
+    overflow: hidden;
+  }
+
+  .file {
+    display: grid;
+    grid-template-columns: minmax(0, 1.1fr) minmax(0, 1.6fr) auto;
+    gap: 1rem;
+    align-items: center;
+    padding: 0.9rem 1.25rem;
+    font-size: 0.9rem;
+  }
+
+  .file + .file { border-top: 1px solid var(--rule); }
+
+  .file-name {
+    font-family: var(--f-mono);
+    font-size: 0.82rem;
+    color: var(--ink);
+    overflow-wrap: anywhere;
+  }
+
+  .file-what { color: var(--ink-soft); font-size: 0.88rem; }
+
+  .tag {
+    font-family: var(--f-mono);
+    font-size: 0.66rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 0.2rem 0.5rem;
+    border-radius: 3px;
+    white-space: nowrap;
+  }
+
+  .tag-new  { background: var(--celadon-wash); color: var(--celadon); }
+  .tag-edit { background: var(--code-bg); color: var(--muted); }
+  .tag-warn { background: var(--seal-wash); color: var(--seal); }
+
+  /* ---------- 변경 항목 ---------- */
+
+  .change {
+    display: flex;
+    flex-direction: column;
+    gap: 1.1rem;
+    padding-top: 2.75rem;
+  }
+
+  .change + .change { border-top: 1px solid var(--rule); }
+
+  .change-head {
+    display: grid;
+    grid-template-columns: 3.4rem 1fr;
+    gap: 1rem;
+    align-items: start;
+  }
+
+  .change-num {
+    font-family: var(--f-mono);
+    font-size: 0.74rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    color: var(--celadon);
+    border: 1px solid var(--celadon-dim);
+    border-radius: 3px;
+    text-align: center;
+    padding: 0.2rem 0;
+    margin-top: 0.35rem;
+  }
+
+  .change-title { display: flex; flex-direction: column; gap: 0.45rem; }
+  .change-title h3 { font-size: 1.18rem; font-weight: 700; letter-spacing: -0.01em; }
+  .change-title .where { font-family: var(--f-mono); font-size: 0.76rem; color: var(--muted); }
+  .change-why { color: var(--ink-soft); font-size: 0.97rem; max-width: 42rem; }
+
+  /* ---------- Before / After ---------- */
+
+  .ba {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 21rem), 1fr));
+    gap: 1rem;
+  }
+
+  .pane {
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    background: var(--card);
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .pane-head {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    padding: 0.6rem 0.9rem;
+    border-bottom: 1px solid var(--rule);
+    font-family: var(--f-mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+
+  .pane-before .pane-head { color: var(--seal); background: var(--seal-wash); }
+  .pane-after  .pane-head { color: var(--celadon); background: var(--celadon-wash); }
+
+  .dot { width: 6px; height: 6px; border-radius: 50%; flex: none; }
+  .pane-before .dot { background: var(--seal); }
+  .pane-after  .dot { background: var(--celadon); }
+
+  pre {
+    margin: 0;
+    padding: 0.95rem 1.05rem;
+    overflow-x: auto;
+    background: var(--code-bg);
+    font-family: var(--f-mono);
+    font-size: 0.78rem;
+    line-height: 1.72;
+    color: var(--ink);
+    tab-size: 2;
+    flex: 1;
+  }
+
+  pre code { background: none; padding: 0; font-size: inherit; }
+
+  .cm { color: var(--muted); }
+  .del { color: var(--seal); }
+  .add { color: var(--celadon); font-weight: 600; }
+
+  .takeaway {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.85rem;
+    align-items: start;
+    background: var(--paper-sunk);
+    border-left: 2px solid var(--celadon);
+    padding: 0.9rem 1.1rem;
+    font-size: 0.93rem;
+    color: var(--ink-soft);
+    border-radius: 0 3px 3px 0;
+  }
+
+  .takeaway .eyebrow { padding-top: 0.15rem; white-space: nowrap; }
+
+  /* ---------- 표 ---------- */
+
+  .table-scroll { overflow-x: auto; border: 1px solid var(--rule); border-radius: 4px; }
+
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    background: var(--card);
+    font-size: 0.9rem;
+    min-width: 30rem;
+  }
+
+  th, td { text-align: left; padding: 0.72rem 1rem; border-bottom: 1px solid var(--rule); }
+  tbody tr:last-child td { border-bottom: none; }
+
+  th {
+    font-family: var(--f-mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 400;
+    background: var(--paper-sunk);
+  }
+
+  td.ok { color: var(--celadon); font-family: var(--f-mono); font-size: 0.82rem; white-space: nowrap; }
+  td.num { font-family: var(--f-mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+  /* ---------- 주의 ---------- */
+
+  .caution {
+    border: 1px solid var(--seal-dim);
+    background: var(--seal-wash);
+    border-radius: 4px;
+    padding: 1.35rem 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+  }
+
+  .caution h3 { font-size: 1.02rem; font-weight: 700; color: var(--seal); }
+  .caution p { font-size: 0.93rem; color: var(--ink-soft); }
+  .caution ul { margin: 0; padding-left: 1.1rem; display: flex; flex-direction: column; gap: 0.45rem; }
+  .caution li { font-size: 0.92rem; color: var(--ink-soft); }
+
+  footer {
+    margin-top: 4.5rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--rule);
+    font-family: var(--f-mono);
+    font-size: 0.74rem;
+    color: var(--muted);
+    line-height: 1.9;
+  }
+
+  @media (max-width: 34rem) {
+    .file { grid-template-columns: 1fr; gap: 0.35rem; }
+    .change-head { grid-template-columns: 1fr; gap: 0.5rem; }
+    .change-num { width: 3.4rem; margin-top: 0; }
+    .link { grid-template-columns: 1fr; gap: 0.5rem; }
+    .link-id { width: 4.5rem; }
+    .takeaway { grid-template-columns: 1fr; gap: 0.4rem; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+
+  :focus-visible { outline: 2px solid var(--celadon); outline-offset: 2px; }
+</style>
+
+<div class="wrap">
+
+  <header>
+    <span class="eyebrow">나의 사관일지 · 파이프라인 감식 기록</span>
+    <h1>날짜 검색은 부정확했던 게 아니라<br>한 번도 동작한 적이 없었다</h1>
+    <p class="lede">
+      임베딩 파이프라인을 고친 변경 내용을 코드 한 쌍씩 짚어가며 설명합니다.
+      무엇이 왜 그렇게 되어 있었고, 무엇으로 바뀌었는지가 순서대로 나옵니다.
+    </p>
+    <div class="meta">
+      <span>작업일 2026-08-02</span>
+      <span>변경 +424 / −232</span>
+      <span>신규 4파일 · 수정 4파일</span>
+      <span>테스트 48개 통과</span>
+    </div>
+  </header>
+
+  <section>
+    <div class="sec-head col">
+      <span class="eyebrow">한눈에</span>
+      <h2>수정 전후</h2>
+      <p>
+        벡터DB를 비우고 새 규칙으로 다시 채운 결과입니다.
+        청크 수가 줄어든 것은 데이터를 잃은 게 아니라, 검색을 방해하던 것이 빠진 결과입니다.
+      </p>
+    </div>
+
+    <div class="stats">
+      <div class="stat">
+        <span class="stat-label">플러그인 청크</span>
+        <span class="stat-move">
+          <span class="stat-before">510</span>
+          <span class="stat-arrow">→</span>
+          <span class="stat-after">0</span>
+        </span>
+        <span class="stat-note">Obsidian 플러그인 자바스크립트가 전체의 89%를 차지하고 있었습니다.</span>
+      </div>
+      <div class="stat">
+        <span class="stat-label">날짜 메타데이터</span>
+        <span class="stat-move">
+          <span class="stat-before">0%</span>
+          <span class="stat-arrow">→</span>
+          <span class="stat-after">100%</span>
+        </span>
+        <span class="stat-note">124개 청크 전부가 <code>date</code> 값을 갖게 되었습니다.</span>
+      </div>
+      <div class="stat">
+        <span class="stat-label">수집된 TIL 문서</span>
+        <span class="stat-move">
+          <span class="stat-before">35</span>
+          <span class="stat-arrow">→</span>
+          <span class="stat-after">59</span>
+        </span>
+        <span class="stat-note">한글 파일명 24개가 조용히 누락되고 있었습니다.</span>
+      </div>
+      <div class="stat">
+        <span class="stat-label">DB 파일 크기</span>
+        <span class="stat-move">
+          <span class="stat-before">12MB</span>
+          <span class="stat-arrow">→</span>
+          <span class="stat-after">1.5MB</span>
+        </span>
+        <span class="stat-note">불필요한 데이터 제거 후 <code>VACUUM</code> 실행.</span>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head col">
+      <span class="eyebrow">진단</span>
+      <h2>세 개의 버그가 아니라 하나의 사슬이었다</h2>
+      <p>
+        각각 따로 고칠 수 있는 문제로 보였지만, 실제로는 앞의 문제가 뒤의 문제를 만들고 있었습니다.
+        그래서 하나만 고치면 증상이 사라지지 않습니다.
+      </p>
+    </div>
+
+    <div class="chain">
+      <div class="link">
+        <span class="link-id">P2</span>
+        <div class="link-body">
+          <h3>문서에 날짜를 붙이지 않았다</h3>
+          <p><code>embedding.py</code>가 저장한 건 <code>embedded_at</code>, 즉 임베딩을 실행한 시각이었습니다. 문서가 언제 쓰였는지는 어디에도 없었습니다.</p>
+        </div>
+      </div>
+      <div class="link">
+        <span class="link-id">P3</span>
+        <div class="link-body">
+          <h3>검색은 없는 키를 찾았다</h3>
+          <p><code>log.py</code>는 <code>where={"date": ...}</code>로 조회했습니다. 그 키가 없으니 결과는 언제나 비어 있었습니다.</p>
+        </div>
+      </div>
+      <div class="link">
+        <span class="link-id">P3</span>
+        <div class="link-body">
+          <h3>실패하면 조용히 다른 걸 했다</h3>
+          <p>빈 결과가 나오면 <code>"작성 날짜: 2026-08-01"</code>이라는 <em>문장 자체</em>를 임베딩해 의미가 비슷한 문서를 찾았습니다. 날짜와는 아무 상관이 없는 동작입니다.</p>
+        </div>
+      </div>
+      <div class="link">
+        <span class="link-id">P1</span>
+        <div class="link-body">
+          <h3>그 검색 대상의 89%가 플러그인 코드였다</h3>
+          <p>확장자 목록에 <code>.js</code>가 있어 <code>.obsidian/plugins/</code> 안의 자바스크립트가 통째로 들어가 있었습니다.</p>
+        </div>
+      </div>
+      <div class="chain-out">
+        결과적으로 <strong>날짜를 물으면 자바스크립트가 돌아왔습니다.</strong>
+        그리고 이 실패는 <code>print()</code>로만 기록되어 호출한 쪽에는 전달되지 않았습니다 —
+        겉으로는 "그럭저럭 동작하는 것"처럼 보였던 이유입니다.
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head col">
+      <span class="eyebrow">변경 범위</span>
+      <h2>어떤 파일이 왜 바뀌었나</h2>
+    </div>
+
+    <div class="files">
+      <div class="file">
+        <span class="file-name">src/tools/ingest_rules.py</span>
+        <span class="file-what">수집 규칙과 날짜 추출. 외부 의존성이 없는 순수 함수만 모았습니다.</span>
+        <span class="tag tag-new">신규 260줄</span>
+      </div>
+      <div class="file">
+        <span class="file-name">tests/unit/test_ingest_rules.py</span>
+        <span class="file-what">위 모듈의 단위 테스트. DB도 모델도 없이 0.2초에 끝납니다.</span>
+        <span class="tag tag-new">신규 48개</span>
+      </div>
+      <div class="file">
+        <span class="file-name">scripts/reindex.py</span>
+        <span class="file-what">백업 → 컬렉션 삭제 → 전체 재임베딩 절차.</span>
+        <span class="tag tag-new">신규 91줄</span>
+      </div>
+      <div class="file">
+        <span class="file-name">src/tools/embedding.py</span>
+        <span class="file-what">수집 필터 적용, 날짜 기록, 커밋 변경 요약, 옛 청크 삭제.</span>
+        <span class="tag tag-edit">수정 +346</span>
+      </div>
+      <div class="file">
+        <span class="file-name">src/tools/log.py</span>
+        <span class="file-what">날짜 필터 정정, 조용한 폴백 제거, 일지 재임베딩.</span>
+        <span class="tag tag-edit">수정 +231</span>
+      </div>
+      <div class="file">
+        <span class="file-name">src/unified_controller_single.py</span>
+        <span class="file-what">소스 타입 선택 기준과 일지 도구 사용법을 시스템 프롬프트에 명시.</span>
+        <span class="tag tag-edit">수정 +14</span>
+      </div>
+      <div class="file">
+        <span class="file-name">test_log_tools.py</span>
+        <span class="file-what"><code>maker_logfile</code> 호출에 <code>user_id</code> 추가 — 2곳뿐입니다.</span>
+        <span class="tag tag-warn">일부만</span>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head col">
+      <span class="eyebrow">코드로 보기</span>
+      <h2>핵심 변경 여덟 가지</h2>
+      <p>
+        왼쪽이 이전, 오른쪽이 이후입니다. 실제 코드에서 요점만 발췌했습니다.
+      </p>
+    </div>
+
+    <div class="change">
+      <div class="change-head">
+        <span class="change-num">01</span>
+        <div class="change-title">
+          <h3>무엇을 수집할지 정하는 규칙이 생겼다</h3>
+          <span class="where">src/tools/embedding.py → src/tools/ingest_rules.py</span>
+        </div>
+      </div>
+      <p class="change-why">
+        이전에는 확장자만 맞으면 전부 가져왔습니다. 그 목록에 <code>.js</code>가 있었고, 제외할 폴더도 크기 제한도 없었습니다.
+        그래서 Obsidian 플러그인 소스가 통째로 들어왔습니다.
+      </p>
+      <div class="ba">
+        <div class="pane pane-before">
+          <div class="pane-head"><span class="dot"></span>이전</div>
+<pre><code>TEXT_EXTENSIONS = {".txt", ".md", ".py",
+    <span class="del">".js"</span>, ".tsx", ".jsx", ".java",
+    ".go", ".rs", ".c", ".cpp", ".h"}
+
+for file_path in repo_dir.rglob("*"):
+    if file_path.is_file() and \
+       file_path.suffix in TEXT_EXTENSIONS:
+        <span class="cm"># 제외 폴더 없음</span>
+        <span class="cm"># 크기 제한 없음</span>
+        ...</code></pre>
+        </div>
+        <div class="pane pane-after">
+          <div class="pane-head"><span class="dot"></span>이후</div>
+<pre><code><span class="add">DOC_EXTENSIONS = {".md", ".txt", ".markdown"}</span>
+
+<span class="add">EXCLUDE_DIRS = {
+    ".git", ".obsidian", "node_modules",
+    ".venv", "dist", "build", "__pycache__", ...
+}</span>
+<span class="add">MAX_FILE_SIZE = 200_000</span>
+
+for file_path in root.rglob("*"):
+    <span class="add">ok, reason = should_collect(file_path, root)</span>
+    <span class="add">if not ok:
+        note(reason)   # 제외 사유를 집계
+        continue</span></code></pre>
+        </div>
+      </div>
+      <div class="takeaway">
+        <span class="eyebrow">요점</span>
+        <span>제외한 파일을 <strong>사유별로 집계</strong>해 임베딩 결과에 함께 보여줍니다. 무엇이 왜 빠졌는지 눈에 보여야 다음 오염을 막을 수 있습니다.</span>
+      </div>
+    </div>
+
+    <div class="change">
+      <div class="change-head">
+        <span class="change-num">02</span>
+        <div class="change-title">
+          <h3>문서에 진짜 날짜가 붙었다</h3>
+          <span class="where">src/tools/embedding.py</span>
+        </div>
+      </div>
+      <p class="change-why">
+        프로젝트의 핵심은 "날짜를 메타데이터로 놓고 임베딩한다"였는데, 정작 그 날짜가 없었습니다.
+        이제 네 가지 근거를 순서대로 시도하고, 끝내 못 찾으면 그 문서는 수집하지 않습니다.
+      </p>
+      <div class="ba">
+        <div class="pane pane-before">
+          <div class="pane-head"><span class="dot"></span>이전</div>
+<pre><code>metadata={
+    "file_path": str(rel_path),
+    "file_hash": file_hash,
+    <span class="del">"embedded_at": datetime.now().isoformat()</span>
+    <span class="cm"># ↑ 임베딩을 '실행한' 시각.</span>
+    <span class="cm">#   문서 날짜가 아님.</span>
+    <span class="cm">#   전부 같은 값이 들어감.</span>
+}</code></pre>
+        </div>
+        <div class="pane pane-after">
+          <div class="pane-head"><span class="dot"></span>이후</div>
+<pre><code><span class="add">doc_date, date_origin = resolve_date(
+    rel_path, content, git_dates, abs_path
+)</span>
+<span class="add">if not doc_date:
+    note("no_date")
+    continue   # 날짜 없으면 수집 안 함</span>
+
+metadata={
+    "file_path": str(rel_path),
+    "file_hash": file_hash,
+    <span class="add">"date": doc_date,          # 2026-07-21</span>
+    <span class="add">"date_origin": date_origin, # filename | git</span>
+    "embedded_at": datetime.now().isoformat(),
+}</code></pre>
+        </div>
+      </div>
+      <div class="takeaway">
+        <span class="eyebrow">우선순위</span>
+        <span>① 파일명 <code>2026_05_14.md</code> → ② frontmatter의 <code>date:</code> → ③ git 커밋 날짜 → ④ 파일 수정 시각. 실제로는 파일명 27개, git 32개로 채워졌습니다.</span>
+      </div>
+    </div>
+
+    <div class="change">
+      <div class="change-head">
+        <span class="change-num">03</span>
+        <div class="change-title">
+          <h3>실패를 숨기던 폴백을 없앴다</h3>
+          <span class="where">src/tools/log.py</span>
+        </div>
+      </div>
+      <p class="change-why">
+        가장 중요한 변경입니다. 이전 코드는 날짜 필터가 실패하면 <em>말없이</em> 완전히 다른 검색을 했습니다.
+        그 결과가 엉뚱해도 사용자는 "검색이 좀 부정확하네"라고만 느꼈을 겁니다.
+      </p>
+      <div class="ba">
+        <div class="pane pane-before">
+          <div class="pane-head"><span class="dot"></span>이전</div>
+<pre><code>try:
+    docs = reopened.get(
+        where={"date": date_filter}, limit=k)
+    if docs and docs.get('documents'):
+        ...
+    else:
+        <span class="cm"># 날짜 문자열을 임베딩해서</span>
+        <span class="cm"># 의미가 비슷한 문서를 찾는다</span>
+        <span class="del">docs = reopened.similarity_search(
+            f"작성 날짜: {date}", k=k)</span>
+except Exception as e:
+    <span class="del">print(f"[DEBUG] {e}")</span>
+    <span class="del">docs = reopened.similarity_search(
+        f"작성 날짜: {date}", k=k)</span></code></pre>
+        </div>
+        <div class="pane pane-after">
+          <div class="pane-head"><span class="dot"></span>이후</div>
+<pre><code>found = store.get(where=where, limit=k,
+                  include=["documents", "metadatas"])
+
+<span class="add">if not contents:
+    message = f"📭 '{period}'에 기록된 문서가 없습니다."</span>
+
+    <span class="add">available = _known_dates(store)
+    if available:
+        message += "\n\n기록이 있는 최근 날짜: " \
+                 + ", ".join(available)
+    return message</span>
+
+<span class="cm"># 날짜 문자열 유사도 검색은 폴백으로도</span>
+<span class="cm"># 쓰지 않는다 — 날짜와 무관한 동작이므로</span></code></pre>
+        </div>
+      </div>
+      <div class="takeaway">
+        <span class="eyebrow">요점</span>
+        <span>없으면 <strong>없다고 말하고</strong>, 대신 기록이 있는 날짜를 알려줍니다. 원래 의도와 무관한 동작으로 빠지는 건 폴백이 아니라 실패를 감추는 코드입니다.</span>
+      </div>
+    </div>
+
+    <div class="change">
+      <div class="change-head">
+        <span class="change-num">04</span>
+        <div class="change-title">
+          <h3>검색 결과가 읽던 키 이름이 틀려 있었다</h3>
+          <span class="where">src/tools/log.py</span>
+        </div>
+      </div>
+      <p class="change-why">
+        저장하는 쪽은 <code>source_name</code>, 읽는 쪽은 <code>source</code>였습니다.
+        세 개 키가 전부 어긋나 있어서, 검색 결과에는 언제나 기본값만 표시됐습니다.
+      </p>
+      <div class="ba">
+        <div class="pane pane-before">
+          <div class="pane-head"><span class="dot"></span>이전</div>
+<pre><code>source   = doc.metadata.get(<span class="del">"source"</span>, "unknown")
+doc_type = doc.metadata.get(<span class="del">"type"</span>, "document")
+doc_date = doc.metadata.get("date", "날짜 정보 없음")
+
+<span class="cm"># 실제 출력:</span>
+<span class="cm">#   날짜: 날짜 정보 없음</span>
+<span class="cm">#   출처: unknown</span>
+<span class="cm">#   타입: document</span></code></pre>
+        </div>
+        <div class="pane pane-after">
+          <div class="pane-head"><span class="dot"></span>이후</div>
+<pre><code>meta.get(<span class="add">'date'</span>, '날짜 정보 없음')
+meta.get(<span class="add">'source_name'</span>, 'unknown')
+meta.get(<span class="add">'source_type'</span>, 'document')
+<span class="add">if meta.get("file_path"): ... # 경로도 함께</span>
+
+<span class="cm"># 실제 출력:</span>
+<span class="cm">#   날짜: 2026-07-22</span>
+<span class="cm">#   출처: Yuta_TIL</span>
+<span class="cm">#   타입: git</span>
+<span class="cm">#   경로: Today I Learn/2026_07_21.md</span></code></pre>
+        </div>
+      </div>
+    </div>
+
+    <div class="change">
+      <div class="change-head">
+        <span class="change-num">05</span>
+        <div class="change-title">
+          <h3>수정한 문서의 옛 내용이 남지 않게 했다</h3>
+          <span class="where">src/tools/embedding.py</span>
+        </div>
+      </div>
+      <p class="change-why">
+        파일을 고치면 해시가 바뀌어 새 문서로 추가됐지만, <strong>이전 해시의 청크를 지우는 코드가 없었습니다.</strong>
+        아직 재동기화를 돌리지 않아 드러나지 않았을 뿐, 돌리는 순간부터 옛 내용이 계속 쌓였을 문제입니다.
+      </p>
+      <div class="ba">
+        <div class="pane pane-before">
+          <div class="pane-head"><span class="dot"></span>이전</div>
+<pre><code>new_docs, skipped = _filter_new_documents(
+    documents, user_id, source.id)
+
+<span class="cm"># 바뀐 파일의 옛 청크는?</span>
+<span class="del"># → 지우지 않고 그대로 둠</span>
+
+chunks = _split_documents(new_docs)
+if chunks:
+    _save_to_chromadb(chunks, user_id)</code></pre>
+        </div>
+        <div class="pane pane-after">
+          <div class="pane-head"><span class="dot"></span>이후</div>
+<pre><code>new_docs, unchanged = _filter_new_documents(
+    documents, user_id, source.id)
+
+<span class="add"># 갱신되는 문서의 옛 청크를 먼저 제거</span>
+<span class="add">stale_deleted = _delete_stale_chunks(
+    user_id, source.id, new_docs)</span>
+
+chunks = _split_documents(new_docs)
+if chunks:
+    _save_to_chromadb(chunks, user_id)</code></pre>
+        </div>
+      </div>
+      <div class="takeaway">
+        <span class="eyebrow">패턴</span>
+        <span>넣기 전에 지운다(<strong>delete-then-insert</strong>). 일지도 같은 방식이라, 같은 날짜로 다시 저장하면 이전 일지가 교체됩니다.</span>
+      </div>
+    </div>
+
+    <div class="change">
+      <div class="change-head">
+        <span class="change-num">06</span>
+        <div class="change-title">
+          <h3>커밋에 "무엇이 얼마나 바뀌었는지"를 담았다</h3>
+          <span class="where">src/tools/embedding.py</span>
+        </div>
+      </div>
+      <p class="change-why">
+        코드 프로젝트는 파일 본문 대신 커밋 이력을 수집하기로 했습니다.
+        요청하신 diff 정보는 넣되, <code>+</code>/<code>−</code> 라인 원문 대신 <code>--numstat</code> 기반 요약으로 바꿨습니다 —
+        원문 diff는 임베딩 품질이 낮고 볼륨이 커지기 때문입니다.
+      </p>
+      <div class="ba">
+        <div class="pane pane-before">
+          <div class="pane-head"><span class="dot"></span>이전</div>
+<pre><code>content = (
+    f"Commit: {message}\n"
+    f"Author: {author}\n"
+    f"Date: {date}"
+)
+
+<span class="cm"># date 값: "2026-07-30 00:47:34 +0900"</span>
+<span class="del"># → YYYY-MM-DD 필터와 절대 일치하지 않음</span></code></pre>
+        </div>
+        <div class="pane pane-after">
+          <div class="pane-head"><span class="dot"></span>이후</div>
+<pre><code><span class="cm"># 실제로 저장되는 형태</span>
+<span class="add">[2026-07-30] fix: prune old tagged images
+             after deploy to prevent disk exhaustion
+작성자: hrunj1230
+변경: 2개 파일 (+22 / -3)
+- docs/cicd-setup.md (+18/-1)
+- scripts/deploy.sh (+4/-2)</span>
+
+<span class="cm"># date는 normalize_date로 YYYY-MM-DD 통일</span>
+<span class="cm"># 파일이 많은 커밋은 상위 20개까지만 나열</span></code></pre>
+        </div>
+      </div>
+    </div>
+
+    <div class="change">
+      <div class="change-head">
+        <span class="change-num">07</span>
+        <div class="change-title">
+          <h3>일지가 다시 검색 대상이 됐다</h3>
+          <span class="where">src/tools/log.py</span>
+        </div>
+      </div>
+      <p class="change-why">
+        일지는 원문 위에 놓이는 요약 계층입니다. 그런데 파일로 저장만 하고 임베딩하지 않아서,
+        <strong>원문 → 일지 → 위키</strong>에서 두 번째 화살표가 끊겨 있었습니다.
+      </p>
+      <div class="ba">
+        <div class="pane pane-before">
+          <div class="pane-head"><span class="dot"></span>이전</div>
+<pre><code>def maker_logfile(date: str, content: str):
+    os.makedirs("logs", exist_ok=True)
+    filename = f"logs/{date...}_log.md"
+
+    with open(filename, 'w') as f:
+        f.write(content)
+
+    <span class="del">return f"✅ 일지 저장 완료: {filename}"</span>
+    <span class="cm"># 파일만 쓰고 끝. 검색되지 않음.</span></code></pre>
+        </div>
+        <div class="pane pane-after">
+          <div class="pane-head"><span class="dot"></span>이후</div>
+<pre><code>def maker_logfile(date, content, <span class="add">user_id</span>):
+    ...
+    with open(filename, "w") as f:
+        f.write(content)
+
+    <span class="add">embed_note = _embed_journal(
+        normalized, content, user_id, filename)</span>
+    <span class="add">return f"✅ 일지 저장 완료: {filename}\n{embed_note}"</span>
+
+<span class="cm"># → "🔎 일지를 검색 대상에 등록했습니다."</span>
+<span class="cm"># 임베딩 실패해도 파일 저장은 성공 처리</span></code></pre>
+        </div>
+      </div>
+      <div class="takeaway">
+        <span class="eyebrow">주의</span>
+        <span><code>user_id</code>가 인자로 추가됐습니다. 그래서 <code>test_log_tools.py</code>의 호출 2곳과 시스템 프롬프트를 함께 고쳤습니다.</span>
+      </div>
+    </div>
+
+    <div class="change">
+      <div class="change-head">
+        <span class="change-num">08</span>
+        <div class="change-title">
+          <h3>날짜 파서를 용도별로 둘로 나눴다</h3>
+          <span class="where">src/tools/ingest_rules.py</span>
+        </div>
+      </div>
+      <p class="change-why">
+        검증 중에 <code>2026년 07월 21일</code>이 해석되지 않는 걸 발견했습니다.
+        그런데 파일명 파서를 관대하게 만들면 <code>week03 과제.md</code> 같은 이름에서 엉뚱한 날짜를 뽑아냅니다.
+        그래서 합치지 않고 나눴습니다.
+      </p>
+      <div class="ba">
+        <div class="pane pane-before">
+          <div class="pane-head"><span class="dot"></span>이전 — 하나의 처리</div>
+<pre><code><span class="cm"># log.py 안에서 직접 처리</span>
+date_normalized = <span class="del">re.sub(r'\D', '', date)</span>
+if len(date_normalized) >= 8:
+    date_filter = f"{date_normalized[:4]}-..."
+else:
+    <span class="del">date_filter = date  # 그대로 사용</span>
+
+<span class="cm"># 비숫자를 전부 제거하는 방식.</span>
+<span class="cm"># 파일명에 쓰면 오탐이 난다.</span></code></pre>
+        </div>
+        <div class="pane pane-after">
+          <div class="pane-head"><span class="dot"></span>이후 — 두 개의 함수</div>
+<pre><code><span class="add">normalize_date(raw)</span>
+<span class="cm">  # 파일명 · 메타데이터용. 엄격하게 유지.</span>
+<span class="cm">  # "2026_05_14" ✓   "week03" ✗</span>
+
+<span class="add">parse_user_date(raw)</span>
+<span class="cm">  # 사용자 입력용. 관대하게.</span>
+<span class="cm">  # "2026년 7월 9일"  → 2026-07-09</span>
+<span class="cm">  # "05월 13일"       → 올해로 간주</span>
+<span class="cm">  # "어제" · "지난주" → None (거절)</span></code></pre>
+        </div>
+      </div>
+      <div class="takeaway">
+        <span class="eyebrow">요점</span>
+        <span>같은 "날짜 파싱"이라도 <strong>신뢰할 수 없는 입력</strong>과 <strong>구조가 정해진 입력</strong>은 다른 함수여야 합니다. 하나로 합치면 한쪽의 관대함이 다른 쪽의 오탐이 됩니다.</span>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head col">
+      <span class="eyebrow">계획에 없던 발견</span>
+      <h2>P8 — git이 한글 경로를 숨기고 있었다</h2>
+      <p>
+        임베딩을 돌리기 전에 필터와 날짜 추출만 실데이터에 시험 삼아 돌려봤습니다.
+        그때 <code>no_date: 24</code>가 나왔습니다. git 날짜 매핑에는 109개 경로가 있는데 24개가 날짜를 못 받았습니다.
+      </p>
+    </div>
+
+    <div class="ba">
+      <div class="pane pane-before">
+        <div class="pane-head"><span class="dot"></span>기본 설정</div>
+<pre><code>$ git log --name-only | grep '회'
+
+<span class="del">"AI\355\201\264\353\235\274\354\232\260...md"</span>
+<span class="del">"\353\251\230\355\206\240\353\247\201--22.md"</span>
+
+<span class="cm"># git은 비ASCII 경로를 8진수로</span>
+<span class="cm"># 이스케이프해서 출력한다.</span>
+<span class="cm"># → 실제 파일 경로와 매칭 실패</span></code></pre>
+      </div>
+      <div class="pane pane-after">
+        <div class="pane-head"><span class="dot"></span>core.quotepath=false</div>
+<pre><code>$ git <span class="add">-c core.quotepath=false</span> log --name-only
+
+<span class="add">회고록/week07 회고록.md</span>
+<span class="add">회고록/week05 회고록.md</span>
+
+<span class="cm"># git_file_dates()와 _collect_git_log()</span>
+<span class="cm"># 두 곳에 모두 적용.</span>
+<span class="cm"># 회귀 방지 테스트도 추가.</span></code></pre>
+      </div>
+    </div>
+
+    <div class="takeaway">
+      <span class="eyebrow">교훈</span>
+      <span>
+        비용이 큰 단계(임베딩)를 실행하기 전에 비용이 없는 단계(필터·파싱)만 실데이터에 먼저 돌려봅니다.
+        이 시험이 없었다면 P8은 <strong>"한글 문서가 왠지 검색이 잘 안 되네"</strong>로 오래 남았을 겁니다.
+      </span>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head col">
+      <span class="eyebrow">검증</span>
+      <h2>실제로 돌려서 확인한 것</h2>
+      <p>단위 테스트는 순수 함수만 덮습니다. 도구를 직접 호출해 시나리오별로 확인했습니다.</p>
+    </div>
+
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr><th>시나리오</th><th>입력</th><th>결과</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>기록이 있는 날짜</td><td class="num">2026-07-22</td><td class="ok">✓ 해당 날짜 문서만</td></tr>
+          <tr><td>기록이 없는 날짜</td><td class="num">2026-01-05</td><td class="ok">✓ 없다고 안내 + 있는 날짜 제시</td></tr>
+          <tr><td>기간 조회</td><td class="num">07-20 ~ 07-24</td><td class="ok">✓ 범위 내 문서</td></tr>
+          <tr><td>한국어 날짜 표기</td><td class="num">2026년 07월 21일</td><td class="ok">✓ 수정 후 정상</td></tr>
+          <tr><td>커밋 이력</td><td class="num">2026-07-30</td><td class="ok">✓ 변경 파일·증감량 포함</td></tr>
+          <tr><td>일지 저장 → 즉시 검색</td><td class="num">2026-07-21</td><td class="ok">✓ 검색 결과에 포함</td></tr>
+          <tr><td>같은 날짜 일지 재저장</td><td class="num">2026-07-21</td><td class="ok">✓ 이전 일지 교체</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head col">
+      <span class="eyebrow">읽기 전 확인</span>
+      <h2>diff를 볼 때 주의할 점</h2>
+    </div>
+
+    <div class="caution">
+      <h3>변경분 전부가 이번 작업은 아닙니다</h3>
+      <p>
+        작업을 시작한 시점에 이미 수정 상태였던 파일이 있습니다.
+        <code>git diff</code>를 그대로 보면 이전 세션의 리팩토링이 섞여 보입니다.
+      </p>
+      <ul>
+        <li><code>test_log_tools.py</code> — 이번 작업은 <strong><code>user_id</code> 추가 2곳뿐</strong>입니다. diff에 보이는 대량 삭제분은 이전 세션의 정리 작업입니다.</li>
+        <li><code>src/router.py</code>, <code>src/tools/source.py</code> — <strong>이번 작업과 무관</strong>합니다.</li>
+        <li><code>embedding.py</code>, <code>log.py</code>, <code>unified_controller_single.py</code>, 그리고 신규 4개 파일은 전부 이번 작업입니다.</li>
+      </ul>
+      <p>
+        <strong>아직 커밋하지 않았습니다.</strong> 작업 트리에 <code>unified_controller_router.py</code> 삭제 등
+        무관한 변경이 함께 있어 분리가 필요합니다.
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head col">
+      <span class="eyebrow">다음</span>
+      <h2>남은 것 — AI 대화 로그</h2>
+      <p>
+        <code>_collect_chatlog</code>는 여전히 빈 구현입니다.
+        실측 기준 <code>~/.claude/projects</code>는 79세션에 52MB, 세션당 약 660KB로,
+        <strong>볼륨이 문제가 되는 유일한 소스</strong>입니다.
+        문서와 Git은 연간 수십 MB라 부담이 없습니다.
+      </p>
+      <p>
+        두 가지가 함께 정해져야 합니다 — <strong>무엇을 넣을 것인가</strong>(원문 전체 / 사람 발화 + 최종 답변만 / 세션 요약)와
+        <strong>얼마나 보관할 것인가</strong>(전량 영구 / 최근 N일만 유지하는 hot window).
+      </p>
+    </div>
+  </section>
+
+  <footer>
+    나의 사관일지 · 임베딩 파이프라인 감식 기록 · 2026-08-02<br>
+    상세 분석 docs/embedding-pipeline-issues.md · 작업 과정 docs/embedding-pipeline-worklog.md
+  </footer>
+
+</div>

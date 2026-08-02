@@ -9,7 +9,6 @@
 
 from src.tools.log import retriever_vectordb, maker_logfile
 from src.unified_controller_single import unified_agent as single_agent
-from src.unified_controller_router import unified_agent as router_agent
 
 
 def print_separator(title: str):
@@ -92,7 +91,8 @@ def test_maker_logfile():
     try:
         result = maker_logfile.invoke({
             "date": test_date,
-            "content": test_content
+            "content": test_content,
+            "user_id": "hrunj1230"
         })
         print(f"결과: {result}\n")
     except Exception as e:
@@ -107,7 +107,8 @@ def test_maker_logfile():
     try:
         result = maker_logfile.invoke({
             "date": test_date2,
-            "content": test_content2
+            "content": test_content2,
+            "user_id": "hrunj1230"
         })
         print(f"결과: {result}\n")
     except Exception as e:
@@ -139,31 +140,6 @@ def test_single_agent_log_workflow():
         print(f"오류: {str(e)}\n")
 
 
-def test_router_agent_log_workflow():
-    """Router 방식으로 일지 작성 워크플로우 테스트"""
-    print_separator("🔸 Router 방식 - 일지 작성 워크플로우")
-
-    user_id = "test_user_log_router"
-
-    # 테스트 1: 일지 작성 요청 (source_management로 라우팅되어야 함)
-    print("📋 테스트 1: 일지 작성 요청 (라우팅 확인)")
-    print(f"요청: '오늘 일지 작성해줘'")
-    try:
-        response = router_agent(user_id, "오늘 일지 작성해줘")
-        print(f"응답:\n{response}\n")
-    except Exception as e:
-        print(f"오류: {str(e)}\n")
-
-    # 테스트 2: 과거 날짜 검색
-    print("📋 테스트 2: 과거 날짜 데이터 검색")
-    print(f"요청: '2026년 7월 26일 기록 찾아줘'")
-    try:
-        response = router_agent(user_id, "2026년 7월 26일 기록 찾아줘")
-        print(f"응답:\n{response}\n")
-    except Exception as e:
-        print(f"오류: {str(e)}\n")
-
-
 def test_conversation_with_logs():
     """대화 기록을 유지하며 로그 작업 테스트"""
     print_separator("💬 대화 기록 유지하며 로그 작업 테스트")
@@ -184,29 +160,6 @@ def test_conversation_with_logs():
     print("📋 대화 3: 저장된 파일 확인 요청")
     response3 = single_agent(user_id, "방금 저장한 파일 이름이 뭐야?")
     print(f"응답:\n{response3}\n")
-
-
-def compare_both_agents_log():
-    """두 방식 비교: 로그 작업"""
-    print_separator("⚖️  두 방식 비교: 동일한 로그 작업 요청")
-
-    test_message = "2026년 7월 28일 일지를 작성해줘"
-
-    # Single Agent
-    print("🔹 Single Agent 응답:")
-    try:
-        response_single = single_agent("compare_user_log", test_message)
-        print(f"{response_single}\n")
-    except Exception as e:
-        print(f"오류: {str(e)}\n")
-
-    # Router Agent
-    print("🔸 Router Agent 응답:")
-    try:
-        response_router = router_agent("compare_user_log", test_message)
-        print(f"{response_router}\n")
-    except Exception as e:
-        print(f"오류: {str(e)}\n")
 
 
 def check_created_files():
@@ -242,16 +195,10 @@ def main():
         # 2. 단일 Agent 워크플로우 테스트
         test_single_agent_log_workflow()
 
-        # 3. Router Agent 워크플로우 테스트
-        test_router_agent_log_workflow()
-
-        # 4. 대화 기록 유지 테스트
+        # 3. 대화 기록 유지 테스트
         test_conversation_with_logs()
 
-        # 5. 두 방식 비교
-        compare_both_agents_log()
-
-        # 6. 생성된 파일 확인
+        # 4. 생성된 파일 확인
         check_created_files()
 
         print_separator("✅ 모든 테스트 완료")
