@@ -10,8 +10,9 @@ import os
 import hashlib
 import subprocess
 import json
+import threading
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 import time
 
 # 설정
@@ -22,6 +23,13 @@ CHROMA_DIR = Path("./chroma_db")
 
 # 커밋 하나당 변경 요약에 나열할 최대 파일 수 (대량 변경 커밋의 볼륨 억제)
 MAX_FILES_PER_COMMIT = 20
+
+# 한 번에 임베딩할 청크 수. 작을수록 진행률이 촘촘해지고, 클수록 처리량이 높다.
+EMBED_BATCH_SIZE = 16
+
+# IN_PROGRESS 상태가 이 시간을 넘기면 중단된 작업으로 보고 재시도를 허용한다.
+# 서버가 임베딩 도중 죽으면 상태가 영원히 IN_PROGRESS로 남기 때문이다.
+STALE_AFTER = timedelta(minutes=30)
 
 
 def _get_chroma_collection(user_id: str):
@@ -37,19 +45,28 @@ def _get_chroma_collection(user_id: str):
     return vectorstore._collection
 
 
-def _save_to_chromadb(chunks: list[Document], user_id: str):
-    """청크를 ChromaDB에 저장"""
+def _save_to_chromadb(chunks: list[Document], user_id: str, progress=None):
+    """
+    청크를 ChromaDB에 저장한다.
+
+    진행률을 보고할 수 있도록 배치로 나누어 저장한다. 한 번에 전부 넣으면
+    가장 오래 걸리는 구간에서 아무 신호도 나오지 않는다.
+    """
     if not chunks:
         return
 
-    collection_name = f"user_{user_id}"
-
-    Chroma.from_documents(
-        documents=chunks,
-        embedding=local_embedding,
-        collection_name=collection_name,
-        persist_directory=str(CHROMA_DIR)
+    store = Chroma(
+        collection_name=f"user_{user_id}",
+        embedding_function=local_embedding,
+        persist_directory=str(CHROMA_DIR),
     )
+
+    total = len(chunks)
+    for start in range(0, total, EMBED_BATCH_SIZE):
+        batch = chunks[start:start + EMBED_BATCH_SIZE]
+        store.add_documents(batch)
+        if progress:
+            progress("embedding", min(start + len(batch), total), total)
 
 
 def _delete_source_embeddings(user_id: str, source_id: int) -> int:
@@ -235,7 +252,7 @@ def _collect_git_files(source: Source, user_id: str) -> tuple[list[Document], di
     return documents, skipped
 
 
-def _collect_git_log(source: Source, user_id: str) -> list[Document]:
+def _collect_git_log(source: Source, user_id: str) -> tuple[list[Document], dict[str, int]]:
     """Git 커밋 히스토리 수집 (message + author + date)"""
     repo_dir = DATA_DIR / user_id / source.name
 
@@ -408,9 +425,21 @@ def _delete_stale_chunks(user_id: str, source_id: int, documents: list[Document]
     return deleted
 
 
-def _process_source_by_type(source: Source, user_id: str) -> dict:
-    """소스 타입에 따라 적절한 처리 함수 호출"""
+def _process_source_by_type(source: Source, user_id: str, progress=None) -> dict:
+    """
+    소스 타입에 따라 적절한 처리 함수 호출.
+
+    Args:
+        progress: progress(phase, done, total) 형태의 콜백. 화면 진행률 표시용.
+    """
     start_time = time.time()
+
+    def report(phase: str, done: int = 0, total: int = 0):
+        if progress:
+            progress(phase, done, total)
+
+    # 원격 저장소를 clone/pull 하는 구간이 길 수 있어 먼저 알린다
+    report("collecting")
 
     # 소스 타입별 파일 수집
     if source.type == SourceType.GIT:
@@ -435,9 +464,10 @@ def _process_source_by_type(source: Source, user_id: str) -> dict:
     # 청크 분할
     chunks = _split_documents(new_docs)
 
-    # ChromaDB에 저장
+    # ChromaDB에 저장 (가장 오래 걸리는 구간 — 배치마다 진행률 보고)
     if chunks:
-        _save_to_chromadb(chunks, user_id)
+        report("embedding", 0, len(chunks))
+        _save_to_chromadb(chunks, user_id, progress=progress)
 
     duration = time.time() - start_time
 
@@ -454,6 +484,60 @@ def _process_source_by_type(source: Source, user_id: str) -> dict:
     }
 
 
+def is_stale(source: Source) -> bool:
+    """IN_PROGRESS 상태가 중단된 작업의 잔재인지 판단한다."""
+    if source.embedding_status != EmbeddingStatus.IN_PROGRESS:
+        return False
+    started = source.embedding_started_at
+    if started is None:
+        # 시작 시각이 없다는 건 이 기능 도입 전에 남은 값이므로 재시도를 허용한다
+        return True
+    return datetime.now() - started > STALE_AFTER
+
+
+def _run_embedding_job(user_id: str, source_id: int):
+    """
+    백그라운드 스레드에서 실제 임베딩을 수행한다.
+
+    스레드마다 별도의 DB 세션을 쓴다 (SQLAlchemy 세션은 스레드 간 공유 불가).
+    진행률은 sources.embedding_stats 에 기록되어 화면 폴링으로 노출된다.
+    """
+    db = SessionLocal()
+    try:
+        source = db.query(Source).filter_by(id=source_id, user_id=user_id).first()
+        if not source:
+            return
+
+        def progress(phase: str, done: int = 0, total: int = 0):
+            source.embedding_stats = json.dumps({
+                "phase": phase,
+                "done": done,
+                "total": total,
+            })
+            db.commit()
+
+        try:
+            result = _process_source_by_type(source, user_id, progress=progress)
+
+            source.embedding_status = EmbeddingStatus.COMPLETED
+            source.last_synced_at = datetime.now()
+            source.embedding_stats = json.dumps({**result["stats"], "phase": "done"})
+            source.embedding_error = None
+            db.commit()
+
+        except Exception as e:
+            db.rollback()
+            source = db.query(Source).filter_by(id=source_id, user_id=user_id).first()
+            if source:
+                source.embedding_status = EmbeddingStatus.FAILED
+                source.embedding_error = str(e)
+                db.commit()
+            print(f"[embed] 임베딩 실패 (source_id={source_id}): {e}")
+
+    finally:
+        db.close()
+
+
 @tool
 def embed_source(user_id: str, source_id: int) -> str:
     """
@@ -464,7 +548,7 @@ def embed_source(user_id: str, source_id: int) -> str:
         source_id: 소스 ID
 
     Returns:
-        임베딩 결과 (상세 통계)
+        임베딩 시작 안내 (완료 결과가 아님)
     """
     db = SessionLocal()
     try:
@@ -473,52 +557,39 @@ def embed_source(user_id: str, source_id: int) -> str:
         if not source:
             return f"❌ 오류: 소스를 찾을 수 없습니다. (ID: {source_id})"
 
-        if source.embedding_status == EmbeddingStatus.IN_PROGRESS:
+        if source.embedding_status == EmbeddingStatus.IN_PROGRESS and not is_stale(source):
             return f"⏳ 소스 '{source.name}'는 이미 임베딩 진행 중입니다."
 
-        # 상태 업데이트
+        was_stale = is_stale(source)
+
+        # 작업을 넘기기 전에 상태를 선점한다
         source.embedding_status = EmbeddingStatus.IN_PROGRESS
+        source.embedding_started_at = datetime.now()
         source.embedding_error = None
+        source.embedding_stats = json.dumps({"phase": "starting", "done": 0, "total": 0})
         db.commit()
 
-        try:
-            # 소스 타입별 처리
-            result = _process_source_by_type(source, user_id)
-
-            # 성공 처리
-            source.embedding_status = EmbeddingStatus.COMPLETED
-            source.last_synced_at = datetime.now()
-            source.embedding_stats = json.dumps(result["stats"])
-            source.embedding_error = None
-            db.commit()
-
-            stats = result["stats"]
-            summary = f"""✅ 임베딩 완료: {source.name}
-- 수집된 문서: {stats['files_collected']}개
-- 생성된 청크: {stats['chunks_created']}개
-- 변경 없어 건너뜀: {stats['files_unchanged']}개
-- 제외된 파일: {stats['files_skipped']}개
-- 정리된 옛 청크: {stats['stale_chunks_deleted']}개
-- 소요 시간: {stats['duration_seconds']}초"""
-
-            if stats["skip_reasons"]:
-                top = sorted(stats["skip_reasons"].items(), key=lambda x: -x[1])[:5]
-                summary += "\n\n제외 사유:\n" + "\n".join(
-                    f"  - {reason}: {count}개" for reason, count in top
-                )
-
-            return summary
-
-        except Exception as e:
-            # 실패 처리
-            source.embedding_status = EmbeddingStatus.FAILED
-            source.embedding_error = str(e)
-            db.commit()
-
-            return f"❌ 임베딩 실패: {source.name}\n오류: {str(e)}"
-
+        source_name = source.name
     finally:
         db.close()
+
+    # 실제 작업은 백그라운드에서. 채팅은 기다리지 않고 바로 응답한다.
+    threading.Thread(
+        target=_run_embedding_job,
+        args=(user_id, source_id),
+        daemon=True,
+        name=f"embed-{user_id}-{source_id}",
+    ).start()
+
+    notice = f"""🚀 임베딩을 시작했습니다: {source_name}
+
+저장소를 가져와 문서를 임베딩하는 중이며, 진행 상황은 화면에 표시됩니다.
+완료 여부가 궁금하면 "임베딩 상태 알려줘"라고 물어보세요."""
+
+    if was_stale:
+        notice += "\n\n⚠️ 이전에 중단된 작업이 남아 있어 정리하고 다시 시작했습니다."
+
+    return notice
 
 
 @tool
@@ -553,8 +624,19 @@ def get_embedding_status(user_id: str, source_id: int) -> str:
         if source.last_synced_at:
             result += f"마지막 동기화: {source.last_synced_at.strftime('%Y-%m-%d %H:%M:%S')}\n"
 
-        if source.embedding_stats:
-            stats = json.loads(source.embedding_stats)
+        stats = json.loads(source.embedding_stats) if source.embedding_stats else {}
+
+        if source.embedding_status == EmbeddingStatus.IN_PROGRESS:
+            if is_stale(source):
+                result += (
+                    "\n⚠️ 작업이 중단된 것으로 보입니다 "
+                    f"(시작 후 {STALE_AFTER.total_seconds() / 60:.0f}분 경과).\n"
+                    "다시 임베딩해 달라고 요청하시면 새로 시작합니다."
+                )
+            else:
+                result += f"\n진행: {describe_progress(stats)}"
+
+        elif stats:
             result += f"\n통계:\n"
             result += f"- 수집된 문서: {stats.get('files_collected', 0)}개\n"
             result += f"- 생성된 청크: {stats.get('chunks_created', 0)}개\n"
@@ -567,3 +649,24 @@ def get_embedding_status(user_id: str, source_id: int) -> str:
 
     finally:
         db.close()
+
+
+# 진행 단계를 사용자에게 보여줄 문구로 변환한다
+PHASE_LABELS = {
+    "starting": "준비 중",
+    "collecting": "저장소 가져오는 중",
+    "embedding": "임베딩 중",
+    "done": "완료",
+}
+
+
+def describe_progress(stats: dict) -> str:
+    """진행 상태 dict 를 사람이 읽을 문장으로 만든다."""
+    phase = stats.get("phase", "starting")
+    label = PHASE_LABELS.get(phase, phase)
+    total = stats.get("total") or 0
+    done = stats.get("done") or 0
+
+    if phase == "embedding" and total:
+        return f"{label} ({done}/{total} 청크, {done * 100 // total}%)"
+    return label

@@ -1,34 +1,19 @@
 from fastapi import APIRouter, Depends, Form, Request, HTTPException
-from fastapi.responses import StreamingResponse, RedirectResponse
+from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from . import unified_controller_single as controller
-from .tools.embedding import embed_source
 from .storage.database import get_db
-import uuid
-import subprocess
-import shutil
-import os
+from .storage.models import Source, EmbeddingStatus
+from .tools.embedding import describe_progress, is_stale
+import json
 
 router = APIRouter()
 
 # Jinja2 템플릿 설정
 templates = Jinja2Templates(directory="templates")
 
-
-class QueryReq(BaseModel):
-    message: str
-    user_id: str
-class QueryRes(BaseModel):
-    res: str
-    thread_id: str
-class EmbeddingReq(BaseModel):
-    path: str
-class GitSyncReq(BaseModel):
-    user_id: str
-    repo_url: str
-    branch: str = "main"
 
 # 로그인 관련 모델
 class LoginRequest(BaseModel):
@@ -51,13 +36,72 @@ async def login_page(request: Request):
         name="login.html"
     )
 
-@router.get("/log-maker")
-async def log_maker_page(request: Request):
-    """Git 동기화 & 일지 생성 UI"""
+@router.get("/debugger")
+async def architecture_debugger(request: Request, user_id: str = ""):
+    """현재 구현을 작은 세계처럼 탐색하는 아키텍처 디버거 UI."""
     return templates.TemplateResponse(
         request=request,
-        name="log_maker.html"
+        name="debugger.html",
+        context={"user_id": user_id.strip()},
     )
+
+
+@router.get("/api/debugger/snapshot")
+async def debugger_snapshot(user_id: str = "", db: Session = Depends(get_db)):
+    """디버거 UI에 SQLite/ChromaDB의 읽기 전용 현재 상태를 제공한다."""
+    sources = []
+    status_counts = {status.value: 0 for status in EmbeddingStatus}
+
+    query = db.query(Source).filter(Source.is_active == True)
+    if user_id.strip():
+        query = query.filter(Source.user_id == user_id.strip())
+
+    for source in query.order_by(Source.id.asc()).all():
+        status = source.embedding_status.value
+        status_counts[status] += 1
+        sources.append({
+            "id": source.id,
+            "user_id": source.user_id,
+            "name": source.name,
+            "type": source.type.value,
+            "location": source.location,
+            "embedding_status": status,
+            "last_synced_at": (
+                source.last_synced_at.isoformat() if source.last_synced_at else None
+            ),
+            "error": source.embedding_error,
+        })
+
+    vector_count = None
+    vector_state = "사용자 선택 필요"
+    selected_user = user_id.strip()
+    if selected_user:
+        try:
+            collection = controller.llm_router.chroma_client.get_collection(
+                name=f"user_{selected_user}"
+            )
+            vector_count = collection.count()
+            vector_state = "연결됨"
+        except Exception:
+            vector_count = 0
+            vector_state = "컬렉션 없음"
+
+    return {
+        "ok": True,
+        "user_id": selected_user or None,
+        "source_count": len(sources),
+        "vector_count": vector_count,
+        "vector_state": vector_state,
+        "status_counts": status_counts,
+        "sources": sources,
+        "runtime": {
+            "api": "FastAPI",
+            "agent": "LangGraph 단일 Agent",
+            "llm": "Claude Sonnet 4.5",
+            "embedding": "jhgan/ko-sroberta-multitask",
+            "checkpointer": "메모리 (재시작 시 초기화)",
+        },
+    }
 
 @router.post("/login-form")
 async def login_form(user_id: str = Form(...), db: Session = Depends(get_db)):
@@ -92,8 +136,6 @@ async def get_settings_page(request: Request, user_id: str, db: Session = Depend
     설정 페이지 (HTML)
     - 등록된 소스 목록 보기/삭제
     """
-    from storage.models import Source
-
     # 사용자 존재 확인
     controller.get_user_info(db, user_id=user_id)
 
@@ -115,8 +157,6 @@ async def get_settings_page(request: Request, user_id: str, db: Session = Depend
 @router.post("/user/{user_id}/delete_source/{source_id}")
 async def delete_source(user_id: str, source_id: int, db: Session = Depends(get_db)):
     """소스 삭제 API"""
-    from storage.models import Source
-
     source = db.query(Source).filter(
         Source.id == source_id,
         Source.user_id == user_id
@@ -131,80 +171,56 @@ async def delete_source(user_id: str, source_id: int, db: Session = Depends(get_
     return {"success": True, "message": "소스가 삭제되었습니다"}
 
 #agent-router
-@router.post("/call_agent")
-async def call_agent(req: QueryReq):
-    res = controller.unified_agent(req.user_id, req.message)
-    return {"response": res}
-
 @router.post("/unified_agent")
 async def unified_agent_endpoint(user_id: str = Form(...), message: str = Form(...)):
     """
-    통합 Agent (Router 기반)
-    - Router가 요청을 분석하여 적절한 Agent로 자동 라우팅
-    - 소스 관리 + 일지 작성 모두 처리 가능
+    통합 Agent — 소스 등록, 임베딩, 일지 작성을 하나의 대화창에서 처리한다.
+
+    Git URL과 함께 소스 추가를 요청하면 Agent가 소스를 저장하고 임베딩을
+    백그라운드로 시작한 뒤 곧바로 응답한다. 진행 상황은
+    /user/{user_id}/sources/status 를 폴링해 확인한다.
     """
     res = controller.unified_agent(user_id, message)
     return {"response": res}
 
-# 새로운 엔드포인트: Git 저장소 동기화
-@router.post("/sync_git_repo")
-async def sync_git_repo(req: GitSyncReq):
+
+@router.get("/user/{user_id}/sources/status")
+async def get_sources_status(user_id: str, db: Session = Depends(get_db)):
     """
-    Git 저장소에서 TIL 가져오기 및 임베딩
+    소스별 임베딩 진행 상황 (화면 폴링용).
 
-    Args:
-        user_id: 사용자 식별자
-        repo_url: Git 저장소 URL (예: https://github.com/username/Yuta_TIL.git)
-        branch: 브랜치 이름 (기본값: main)
-
-    Returns:
-        동기화 결과 및 임베딩 정보
+    임베딩은 백그라운드 스레드에서 돌기 때문에, 화면은 이 엔드포인트를
+    주기적으로 조회해 진행률을 갱신한다.
     """
-    user_dir = f"./repos/{req.user_id}"
+    sources = db.query(Source).filter(
+        Source.user_id == user_id,
+        Source.is_active == True
+    ).order_by(Source.id).all()
 
-    # 기존 디렉토리 삭제
-    if os.path.exists(user_dir):
-        shutil.rmtree(user_dir)
+    items = []
+    for source in sources:
+        stats = json.loads(source.embedding_stats) if source.embedding_stats else {}
+        running = source.embedding_status == EmbeddingStatus.IN_PROGRESS
+        stalled = running and is_stale(source)
 
-    try:
-        # Git clone (shallow clone으로 빠르게)
-        print(f"[Git Sync] Cloning {req.repo_url}...")
-        result = subprocess.run(
-            ["git", "clone", "--branch", req.branch, "--depth", "1", req.repo_url, user_dir],
-            check=True,
-            capture_output=True,
-            text=True
-        )
+        items.append({
+            "id": source.id,
+            "name": source.name,
+            "type": source.type.value,
+            "status": "stalled" if stalled else source.embedding_status.value,
+            "progress_text": describe_progress(stats) if running and not stalled else "",
+            "done": stats.get("done") or 0,
+            "total": stats.get("total") or 0,
+            "chunks": stats.get("chunks_created") or 0,
+            "error": source.embedding_error or "",
+            "last_synced_at": (
+                source.last_synced_at.strftime("%Y-%m-%d %H:%M")
+                if source.last_synced_at else ""
+            ),
+        })
 
-        print(f"[Git Sync] Clone 완료!")
-
-        # 임베딩 (사용자별 컬렉션)
-        from tools import embedding_file_for_user
-        embedding_result = embedding_file_for_user(req.user_id, user_dir)
-
-        return {
-            "success": True,
-            "message": "Git 동기화 및 임베딩 완료",
-            "user_id": req.user_id,
-            "repo_url": req.repo_url,
-            "branch": req.branch,
-            "local_path": user_dir,
-            "embedding_result": embedding_result
-        }
-
-    except subprocess.CalledProcessError as e:
-        error_msg = e.stderr if e.stderr else str(e)
-        print(f"[Git Sync] 에러: {error_msg}")
-        return {
-            "success": False,
-            "error": "Git clone 실패",
-            "details": error_msg,
-            "repo_url": req.repo_url
-        }
-    except Exception as e:
-        print(f"[Git Sync] 예상치 못한 에러: {str(e)}")
-        return {
-            "success": False,
-            "error": "동기화 실패",
-            "details": str(e)
-        }
+    # 하나라도 돌고 있으면 화면이 폴링을 계속한다
+    return {
+        "sources": items,
+        "active": any(i["status"] == "in_progress" for i in items),
+    }
