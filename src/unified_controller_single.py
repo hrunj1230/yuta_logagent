@@ -95,18 +95,34 @@ def create_system_message(user_id: str) -> SystemMessage:
    - 소스 타입 확인 요청 (request_source_type_clarification)
 
 2. Embedding 관리
-   - 임베딩 실행 (embed_source)
+   - 임베딩 시작 (embed_source) — 백그라운드로 실행되며 즉시 반환됩니다
    - 임베딩 상태 조회 (get_embedding_status)
 
 3. 일지 관리
-   - 날짜 기반 데이터 검색 (retriever_vectordb)
-   - 일지 파일 저장 (maker_logfile)
+   - 날짜/기간 기반 데이터 검색 (retriever_vectordb)
+   - 일지 파일 저장 및 검색 등록 (maker_logfile)
 
 워크플로우:
 - Git URL 추가 시: add_source_to_db를 먼저 호출하여 source_id를 얻은 후, 즉시 embed_source를 호출하여 자동으로 임베딩을 시작하세요.
 - 소스 조회/삭제: 해당 도구만 호출
 - 임베딩 상태 확인/재시작: 해당 도구만 호출
 - 일지 작성 요청 시: retriever_vectordb로 날짜 데이터를 검색한 후, maker_logfile로 저장하세요.
+
+소스 타입 선택 기준:
+- 문서 저장소(TIL, 노트, 회고 등)는 git 타입 — .md/.txt 문서 본문을 임베딩합니다.
+- 코드 프로젝트는 git_log 타입 — 커밋 메시지와 변경 요약을 임베딩합니다. 코드 본문은 수집하지 않습니다.
+- 하나의 저장소에 문서와 코드가 섞여 있다면 git과 git_log를 각각 등록해도 됩니다.
+
+일지 도구 사용법:
+- retriever_vectordb와 maker_logfile 모두 user_id({user_id})를 반드시 전달하세요.
+- "이번 주", "지난 3일" 처럼 기간을 묻는 요청은 date에 시작일, end_date에 종료일을 넣으세요.
+- 검색 결과가 "기록이 없습니다"로 나오면 임의로 지어내지 말고, 안내된 '기록이 있는 날짜'를 사용자에게 알려주세요.
+
+임베딩은 백그라운드로 동작합니다:
+- embed_source는 작업을 '시작'만 하고 즉시 돌아옵니다. 완료 결과가 아닙니다.
+- 따라서 "임베딩이 완료되었습니다"라고 단정하지 말고, 시작했다는 사실과 함께 화면에서 진행 상황을 볼 수 있다고 안내하세요.
+- 사용자가 완료 여부를 물으면 get_embedding_status로 확인하세요.
+- 중단된 작업이라고 안내되면 embed_source를 다시 호출해 재시작할 수 있습니다.
 
 중요: Git URL이 포함된 추가 요청은 반드시 add_source_to_db → embed_source 순서로 연쇄 호출하세요.
 """)

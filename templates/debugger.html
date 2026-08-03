@@ -1,0 +1,612 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>아키텍처 디버거 - 나의 사관일지</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: #f5f7fa;
+            min-height: 100vh;
+            padding: 20px;
+            color: #333;
+        }
+
+        .mono {
+            font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+        }
+
+        .container { max-width: 1100px; margin: 0 auto; }
+
+        header {
+            background: white;
+            padding: 24px 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+            margin-bottom: 20px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 14px;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        h1 { font-size: 26px; }
+        .subtitle { color: #888; font-size: 13px; margin-top: 4px; }
+
+        .header-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+
+        .back-btn {
+            padding: 10px 18px;
+            background: #f0f0f0;
+            color: #666;
+            text-decoration: none;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+        .back-btn:hover { background: #e4e4e4; }
+
+        .card {
+            background: white;
+            padding: 24px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+            margin-bottom: 20px;
+        }
+
+        .card h2 {
+            font-size: 17px;
+            margin-bottom: 4px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .card .desc { color: #888; font-size: 13px; margin-bottom: 18px; }
+
+        /* ---------- 사용자 선택 ---------- */
+
+        .picker { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+
+        .picker input {
+            flex: 1;
+            min-width: 180px;
+            padding: 10px 12px;
+            border: 2px solid #d8ddea;
+            border-radius: 6px;
+            font-size: 14px;
+            font-family: inherit;
+        }
+        .picker input:focus { outline: none; border-color: #667eea; }
+
+        .btn {
+            padding: 10px 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            font-family: inherit;
+            white-space: nowrap;
+        }
+        .btn.ghost {
+            background: none;
+            border: 1px solid #d8ddea;
+            color: #667eea;
+        }
+        .btn:disabled { opacity: .55; cursor: not-allowed; }
+
+        .toggle {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 13px;
+            color: #666;
+            white-space: nowrap;
+            cursor: pointer;
+        }
+
+        .updated { font-size: 12px; color: #aaa; }
+
+        /* ---------- 요약 타일 ---------- */
+
+        .tiles {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            gap: 14px;
+        }
+
+        .tile {
+            border: 1px solid #eaedf2;
+            border-radius: 8px;
+            padding: 16px;
+            background: #fbfcfe;
+        }
+
+        .tile-label {
+            font-size: 11px;
+            letter-spacing: .09em;
+            text-transform: uppercase;
+            color: #98a0b0;
+            font-weight: 600;
+        }
+
+        .tile-value {
+            font-size: 28px;
+            font-weight: 700;
+            color: #667eea;
+            margin-top: 6px;
+            line-height: 1.2;
+            font-variant-numeric: tabular-nums;
+        }
+        .tile-value.muted { color: #b6bcc9; }
+
+        .tile-note { font-size: 12px; color: #98a0b0; margin-top: 4px; }
+
+        /* ---------- 상태 분포 ---------- */
+
+        .dist { display: flex; flex-direction: column; gap: 10px; }
+
+        .dist-row {
+            display: grid;
+            grid-template-columns: 6.5rem 1fr 2.5rem;
+            gap: 10px;
+            align-items: center;
+            font-size: 13px;
+        }
+
+        .dist-track { height: 10px; background: #f0f2f6; border-radius: 5px; overflow: hidden; }
+        .dist-fill { height: 100%; border-radius: 5px; min-width: 0; transition: width .3s ease; }
+
+        .dist-count { text-align: right; font-variant-numeric: tabular-nums; color: #666; }
+
+        .c-pending     { background: #b6bcc9; }
+        .c-in_progress { background: #4285f4; }
+        .c-completed   { background: #34a853; }
+        .c-failed      { background: #ea4335; }
+
+        /* ---------- 파이프라인 ---------- */
+
+        .pipe { display: flex; flex-direction: column; gap: 8px; }
+
+        .stage {
+            display: grid;
+            grid-template-columns: 9rem 1fr;
+            gap: 14px;
+            align-items: center;
+            border: 1px solid #eaedf2;
+            border-radius: 8px;
+            padding: 12px 14px;
+            background: #fbfcfe;
+        }
+
+        .stage-name { font-weight: 700; font-size: 14px; }
+        .stage-what { font-size: 13px; color: #777; }
+        .stage-what .tech { color: #667eea; font-weight: 600; }
+
+        .pipe-link {
+            text-align: center;
+            color: #c3c8d4;
+            font-size: 13px;
+            line-height: 1;
+        }
+
+        /* ---------- 소스 표 ---------- */
+
+        .table-scroll { overflow-x: auto; border: 1px solid #eaedf2; border-radius: 8px; }
+
+        table { border-collapse: collapse; width: 100%; font-size: 13px; min-width: 46rem; }
+
+        th, td {
+            text-align: left;
+            padding: 11px 14px;
+            border-bottom: 1px solid #f0f2f6;
+            vertical-align: top;
+        }
+        tbody tr:last-child td { border-bottom: none; }
+
+        th {
+            background: #f7f9fc;
+            font-size: 11px;
+            letter-spacing: .08em;
+            text-transform: uppercase;
+            color: #98a0b0;
+            font-weight: 600;
+            white-space: nowrap;
+        }
+
+        td.id { color: #b6bcc9; font-variant-numeric: tabular-nums; }
+        td.loc { color: #888; word-break: break-all; max-width: 22rem; }
+        td.when { color: #888; white-space: nowrap; }
+
+        .badge {
+            display: inline-block;
+            font-size: 11px;
+            font-weight: 700;
+            padding: 3px 9px;
+            border-radius: 12px;
+            white-space: nowrap;
+        }
+        .b-pending     { background: #f1f3f4; color: #5f6368; }
+        .b-in_progress { background: #e8f0fe; color: #1a56c4; }
+        .b-completed   { background: #e6f4ea; color: #1e7e34; }
+        .b-failed      { background: #fdecea; color: #c62828; }
+
+        .err { color: #c62828; font-size: 12px; margin-top: 5px; word-break: break-word; }
+
+        .empty { color: #98a0b0; font-size: 14px; padding: 26px 0; text-align: center; line-height: 1.8; }
+
+        .banner {
+            padding: 12px 16px;
+            border-radius: 8px;
+            font-size: 13px;
+            margin-bottom: 16px;
+            display: none;
+        }
+        .banner.show { display: block; }
+        .banner.warn { background: #fff4e5; color: #8a5a00; border: 1px solid #ffd9a0; }
+        .banner.err  { background: #fdecea; color: #c62828; border: 1px solid #f5b5b0; }
+
+        @media (max-width: 640px) {
+            .stage { grid-template-columns: 1fr; gap: 4px; }
+            .dist-row { grid-template-columns: 5.5rem 1fr 2.2rem; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+            .dist-fill { transition: none; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div>
+                <h1>🧭 아키텍처 디버거</h1>
+                <p class="subtitle">SQLite와 ChromaDB의 현재 상태를 읽기 전용으로 보여준다</p>
+            </div>
+            <div class="header-actions">
+                <span class="updated" id="updated"></span>
+                <label class="toggle">
+                    <input type="checkbox" id="auto" checked>
+                    자동 새로고침
+                </label>
+                <button class="btn ghost" id="refresh" type="button">새로고침</button>
+                <a class="back-btn" id="back" href="/">← 돌아가기</a>
+            </div>
+        </header>
+
+        <div class="banner" id="banner"></div>
+
+        <div class="card">
+            <h2>👤 조회 대상</h2>
+            <p class="desc">
+                사용자를 지정하면 해당 사용자의 소스와 벡터 컬렉션만 봅니다.
+                비워 두면 모든 사용자의 소스를 보되, 벡터 수는 셀 수 없습니다
+                (컬렉션이 사용자별로 나뉘어 있기 때문).
+            </p>
+            <form class="picker" id="picker">
+                <input type="text" id="user-input" placeholder="user_id (예: hrunj1230)"
+                       autocomplete="off" value="{{ user_id }}">
+                <button class="btn" type="submit">조회</button>
+            </form>
+        </div>
+
+        <div class="card">
+            <h2>📊 현재 상태</h2>
+            <p class="desc">소스 등록 수와 벡터 저장소의 실제 청크 수.</p>
+            <div class="tiles" id="tiles"></div>
+        </div>
+
+        <div class="card">
+            <h2>🚦 임베딩 상태 분포</h2>
+            <p class="desc">등록된 소스가 각각 어느 단계에 있는지.</p>
+            <div class="dist" id="dist"></div>
+        </div>
+
+        <div class="card">
+            <h2>🔗 처리 경로</h2>
+            <p class="desc">사용자 요청이 어떤 계층을 거쳐 저장소에 닿는지.</p>
+            <div class="pipe" id="pipe"></div>
+        </div>
+
+        <div class="card">
+            <h2>📦 등록된 소스</h2>
+            <p class="desc">SQLite <span class="mono">sources</span> 테이블의 활성 레코드.</p>
+            <div id="sources"></div>
+        </div>
+    </div>
+
+    <script>
+        const INITIAL_USER = {{ user_id | tojson }};
+        const REFRESH_MS = 5000;
+
+        const STATUS_LABEL = {
+            pending: '대기',
+            in_progress: '진행 중',
+            completed: '완료',
+            failed: '실패',
+        };
+
+        const STAGES = [
+            { name: '브라우저',      key: null,           what: '채팅으로 요청을 보낸다' },
+            { name: 'API 서버',      key: 'api',          what: '요청을 받아 Agent에 넘긴다' },
+            { name: 'Agent',         key: 'agent',        what: '도구를 골라 호출한다' },
+            { name: 'LLM',           key: 'llm',          what: '무엇을 할지 판단한다' },
+            { name: '대화 기록',     key: 'checkpointer', what: '이전 대화를 이어 붙인다' },
+            { name: '임베딩 모델',   key: 'embedding',    what: '문서를 벡터로 바꾼다' },
+            { name: '저장소',        key: null,           what: 'SQLite(소스·상태) + ChromaDB(벡터)' },
+        ];
+
+        let timer = null;
+        let currentUser = INITIAL_USER || '';
+
+        /* ---------- 유틸 ---------- */
+
+        function el(tag, className, text) {
+            const node = document.createElement(tag);
+            if (className) node.className = className;
+            if (text !== undefined && text !== null) node.textContent = text;
+            return node;
+        }
+
+        function showBanner(kind, text) {
+            const b = document.getElementById('banner');
+            b.className = `banner show ${kind}`;
+            b.textContent = text;
+        }
+
+        function hideBanner() {
+            document.getElementById('banner').className = 'banner';
+        }
+
+        function formatTime(iso) {
+            if (!iso) return '—';
+            // ISO 문자열을 사람이 읽기 쉬운 형태로. 파싱 실패하면 원문을 그대로 보여준다.
+            const d = new Date(iso);
+            if (isNaN(d.getTime())) return iso;
+            const pad = (n) => String(n).padStart(2, '0');
+            return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} `
+                 + `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+        }
+
+        /* ---------- 렌더 ---------- */
+
+        function renderTiles(data) {
+            const box = document.getElementById('tiles');
+            box.textContent = '';
+
+            const hasVector = data.vector_count !== null && data.vector_count !== undefined;
+
+            const tiles = [
+                {
+                    label: '등록된 소스',
+                    value: String(data.source_count),
+                    note: data.user_id ? `사용자 ${data.user_id}` : '전체 사용자',
+                },
+                {
+                    label: '벡터 청크',
+                    value: hasVector ? String(data.vector_count) : '—',
+                    note: data.vector_state,
+                    muted: !hasVector,
+                },
+                {
+                    label: '컬렉션',
+                    value: data.user_id ? `user_${data.user_id}` : '—',
+                    note: 'ChromaDB',
+                    muted: !data.user_id,
+                    small: true,
+                },
+            ];
+
+            for (const t of tiles) {
+                const card = el('div', 'tile');
+                card.appendChild(el('div', 'tile-label', t.label));
+
+                const v = el('div', 'tile-value' + (t.muted ? ' muted' : ''), t.value);
+                if (t.small) v.style.fontSize = '16px';
+                card.appendChild(v);
+
+                card.appendChild(el('div', 'tile-note', t.note));
+                box.appendChild(card);
+            }
+        }
+
+        function renderDist(data) {
+            const box = document.getElementById('dist');
+            box.textContent = '';
+
+            const counts = data.status_counts || {};
+            const total = Object.values(counts).reduce((a, b) => a + b, 0);
+
+            if (total === 0) {
+                box.appendChild(el('div', 'empty', '등록된 소스가 없습니다.'));
+                return;
+            }
+
+            for (const key of ['pending', 'in_progress', 'completed', 'failed']) {
+                const n = counts[key] || 0;
+
+                const row = el('div', 'dist-row');
+                row.appendChild(el('span', null, STATUS_LABEL[key]));
+
+                const track = el('div', 'dist-track');
+                const fill = el('div', `dist-fill c-${key}`);
+                fill.style.width = `${(n / total) * 100}%`;
+                track.appendChild(fill);
+                row.appendChild(track);
+
+                row.appendChild(el('span', 'dist-count', String(n)));
+                box.appendChild(row);
+            }
+        }
+
+        function renderPipe(data) {
+            const box = document.getElementById('pipe');
+            box.textContent = '';
+            const runtime = data.runtime || {};
+
+            STAGES.forEach((stage, i) => {
+                if (i > 0) box.appendChild(el('div', 'pipe-link', '↓'));
+
+                const row = el('div', 'stage');
+                row.appendChild(el('div', 'stage-name', stage.name));
+
+                const what = el('div', 'stage-what');
+                what.appendChild(document.createTextNode(stage.what));
+
+                const tech = stage.key ? runtime[stage.key] : null;
+                if (tech) {
+                    what.appendChild(document.createTextNode(' · '));
+                    what.appendChild(el('span', 'tech', tech));
+                }
+
+                row.appendChild(what);
+                box.appendChild(row);
+            });
+        }
+
+        function renderSources(data) {
+            const box = document.getElementById('sources');
+            box.textContent = '';
+
+            const sources = data.sources || [];
+            if (sources.length === 0) {
+                box.appendChild(el('div', 'empty',
+                    '등록된 소스가 없습니다. AI 어시스턴트에게 저장소 URL을 알려주세요.'));
+                return;
+            }
+
+            const scroll = el('div', 'table-scroll');
+            const table = el('table');
+
+            const thead = el('thead');
+            const hr = el('tr');
+            for (const h of ['ID', '이름', '타입', '위치', '상태', '마지막 동기화']) {
+                hr.appendChild(el('th', null, h));
+            }
+            thead.appendChild(hr);
+            table.appendChild(thead);
+
+            const tbody = el('tbody');
+            for (const s of sources) {
+                const tr = el('tr');
+
+                tr.appendChild(el('td', 'id mono', String(s.id)));
+
+                const nameCell = el('td');
+                nameCell.appendChild(el('strong', null, s.name));
+                if (!data.user_id && s.user_id) {
+                    nameCell.appendChild(el('div', 'tile-note', s.user_id));
+                }
+                tr.appendChild(nameCell);
+
+                tr.appendChild(el('td', 'mono', s.type));
+                tr.appendChild(el('td', 'loc mono', s.location));
+
+                const statusCell = el('td');
+                const badge = el('span', `badge b-${s.embedding_status}`,
+                                 STATUS_LABEL[s.embedding_status] || s.embedding_status);
+                statusCell.appendChild(badge);
+                if (s.error) statusCell.appendChild(el('div', 'err', s.error));
+                tr.appendChild(statusCell);
+
+                tr.appendChild(el('td', 'when mono', formatTime(s.last_synced_at)));
+
+                tbody.appendChild(tr);
+            }
+            table.appendChild(tbody);
+            scroll.appendChild(table);
+            box.appendChild(scroll);
+        }
+
+        /* ---------- 조회 ---------- */
+
+        async function load() {
+            const btn = document.getElementById('refresh');
+            btn.disabled = true;
+
+            try {
+                const url = '/api/debugger/snapshot'
+                          + (currentUser ? `?user_id=${encodeURIComponent(currentUser)}` : '');
+                const res = await fetch(url);
+
+                if (!res.ok) {
+                    showBanner('err', `상태를 불러오지 못했습니다 (HTTP ${res.status}).`);
+                    return;
+                }
+
+                const data = await res.json();
+
+                renderTiles(data);
+                renderDist(data);
+                renderPipe(data);
+                renderSources(data);
+
+                if (!data.user_id) {
+                    showBanner('warn',
+                        '사용자를 지정하지 않아 벡터 수를 셀 수 없습니다. 컬렉션이 사용자별로 나뉘어 있습니다.');
+                } else if (data.vector_state === '컬렉션 없음') {
+                    showBanner('warn',
+                        `user_${data.user_id} 컬렉션이 아직 없습니다. 임베딩을 한 번도 완료하지 않았을 수 있습니다.`);
+                } else {
+                    hideBanner();
+                }
+
+                const now = new Date();
+                const pad = (n) => String(n).padStart(2, '0');
+                document.getElementById('updated').textContent =
+                    `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())} 기준`;
+
+            } catch (e) {
+                showBanner('err', `서버에 연결하지 못했습니다: ${e.message}`);
+            } finally {
+                btn.disabled = false;
+            }
+        }
+
+        function scheduleNext() {
+            clearTimeout(timer);
+            if (document.getElementById('auto').checked) {
+                timer = setTimeout(async () => {
+                    await load();
+                    scheduleNext();
+                }, REFRESH_MS);
+            }
+        }
+
+        function setUser(value) {
+            currentUser = value.trim();
+
+            // 새로고침해도 같은 화면이 나오도록 주소를 맞춰 둔다
+            const url = currentUser
+                ? `/debugger?user_id=${encodeURIComponent(currentUser)}`
+                : '/debugger';
+            history.replaceState(null, '', url);
+
+            document.getElementById('back').href =
+                currentUser ? `/user/${encodeURIComponent(currentUser)}` : '/';
+        }
+
+        document.getElementById('picker').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            setUser(document.getElementById('user-input').value);
+            await load();
+            scheduleNext();
+        });
+
+        document.getElementById('refresh').addEventListener('click', async () => {
+            await load();
+            scheduleNext();
+        });
+
+        document.getElementById('auto').addEventListener('change', scheduleNext);
+
+        setUser(currentUser);
+        load().then(scheduleNext);
+    </script>
+</body>
+</html>

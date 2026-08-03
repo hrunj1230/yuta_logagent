@@ -6,6 +6,28 @@
 
 ---
 
+## ✅ 처리 완료 (2026-07-31)
+
+아래 문서 내용을 실제 코드와 재검증 후 정리를 완료했습니다.
+
+**실행 완료:**
+- `__pycache__/`, `.pytest_cache/` 삭제
+- `users.db.backup_20260728_184352` → `backups/`로 이동
+- `user_page.html`의 사용되지 않는 JS 함수 정리
+- `src/unified_controller_router.py` 삭제
+- `src/embedding_optimizer.py` 삭제
+- `src/tools/source.py::add_source_and_embed` 삭제 (미사용 `_embed_source_tool` import도 함께 정리)
+- `router.py`의 `/source_manager` 엔드포인트 삭제
+- `test_unified_agents.py` 삭제, `test_log_tools.py`에서 router 관련 테스트 제거
+
+**검증 중 문서에 없던 사항 추가 발견:**
+1. **테스트 의존성 누락**: `test_log_tools.py`, `test_unified_agents.py`가 `unified_controller_router.py`를 import하고 있어, 원래 문서대로 router.py만 삭제하면 두 테스트가 깨지는 상태였음 → 함께 정리 완료.
+2. **추가 죽은 코드**: `user_page.html`의 `showSyncForm()` / `syncRepo()`도 문서에 언급되지 않은 미사용 함수였음 (메뉴의 "Git 동기화" 링크는 `/log-maker` 페이지로 직접 이동하며 이 함수를 호출하지 않음) → 함께 삭제.
+3. **⚠️ 미해결 버그**: `user_page.html`의 `callAgent()`가 `/call_agent`를 호출할 때 body로 `{req, thread_id}`를 보내는데, `/call_agent`는 `QueryReq(message, user_id)`를 기대함 — 필드명 불일치로 항상 422 에러가 났을 것으로 보임. 다만 `callAgent()` 자체가 죽은 코드라 실제 노출되지 않음.
+4. **⚠️ 별도 확인 필요**: `log_maker.html`도 `/call_agent`에 `{req, thread_id}`를 보내는데 동일한 필드명 불일치가 있음. 이쪽은 실제로 메뉴에서 접근 가능한 "일지 생성" 폼이라 **현재 작동하지 않을 가능성이 높음**. `/call_agent`는 log_maker.html이 여전히 사용 중이라 이번 정리에서는 삭제하지 않고 보존했으나, 이 필드명 문제는 별도로 확인/수정이 필요함.
+
+---
+
 ## 📋 요약
 
 리팩토링 과정에서 **Router 방식 → Single Agent 방식**으로 전환되면서 일부 파일과 코드가 더 이상 사용되지 않게 되었습니다.

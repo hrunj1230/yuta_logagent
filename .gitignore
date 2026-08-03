@@ -20,6 +20,8 @@ chroma_db
 users.db
 users.db.backup_*
 data/
+backups/
+logs/
 
 docs/aidocs/
 repos

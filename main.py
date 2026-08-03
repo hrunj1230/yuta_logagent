@@ -10,7 +10,7 @@ load_dotenv()
 # 데이터베이스 초기화 (테이블이 없으면 자동 생성)
 init_db()
 
-app = FastAPI(title="log_maker")
+app = FastAPI(title="나의 사관일지")
 
-# 라우터 등록 (/, /login-form, /user, /log-maker 등)
+# 라우터 등록 (/, /login-form, /user, /unified_agent 등)
 app.include_router(router)
