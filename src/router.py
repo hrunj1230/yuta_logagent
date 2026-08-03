@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from . import unified_controller_single as controller
 from .storage.database import get_db
 from .storage.models import Source, EmbeddingStatus
-from .tools.embedding import describe_progress, is_stale
+from .tools.embedding import _delete_source_embeddings, describe_progress, is_stale
 import json
 
 router = APIRouter()
@@ -150,13 +150,20 @@ async def get_settings_page(request: Request, user_id: str, db: Session = Depend
         name="settings.html",
         context={
             "user_id": user_id,
-            "sources": sources
+            "sources": sources,
+            # 중단된 작업을 화면에서 구분하기 위해 판정 함수를 그대로 넘긴다
+            "is_stale": is_stale,
         }
     )
 
 @router.post("/user/{user_id}/delete_source/{source_id}")
 async def delete_source(user_id: str, source_id: int, db: Session = Depends(get_db)):
-    """소스 삭제 API"""
+    """
+    소스 삭제 API.
+
+    SQLite 레코드만 지우면 해당 소스의 청크가 벡터DB에 남아 이후 검색에 계속
+    섞이므로, Agent의 delete_source_from_db와 동일하게 임베딩까지 함께 지운다.
+    """
     source = db.query(Source).filter(
         Source.id == source_id,
         Source.user_id == user_id
@@ -165,10 +172,16 @@ async def delete_source(user_id: str, source_id: int, db: Session = Depends(get_
     if not source:
         raise HTTPException(status_code=404, detail="소스를 찾을 수 없습니다")
 
+    deleted_chunks = _delete_source_embeddings(user_id, source_id)
+
     db.delete(source)
     db.commit()
 
-    return {"success": True, "message": "소스가 삭제되었습니다"}
+    return {
+        "success": True,
+        "message": f"소스가 삭제되었습니다 (임베딩 {deleted_chunks}개 정리)",
+        "deleted_chunks": deleted_chunks,
+    }
 
 #agent-router
 @router.post("/unified_agent")

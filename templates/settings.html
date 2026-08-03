@@ -108,6 +108,40 @@
             margin-right: 8px;
         }
 
+        .status-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 700;
+            margin-right: 8px;
+        }
+        .s-pending     { background: #f1f3f4; color: #5f6368; }
+        .s-in_progress { background: #e8f0fe; color: #1a56c4; }
+        .s-completed   { background: #e6f4ea; color: #1e7e34; }
+        .s-failed      { background: #fdecea; color: #c62828; }
+        .s-stalled     { background: #fff4e5; color: #b26a00; }
+
+        .source-progress {
+            color: #1a56c4;
+            font-size: 13px;
+            font-weight: 500;
+            margin-top: 6px;
+        }
+
+        .source-error {
+            color: #c62828;
+            font-size: 13px;
+            margin-top: 6px;
+            word-break: break-word;
+        }
+
+        .source-hint {
+            color: #b26a00;
+            font-size: 13px;
+            margin-top: 6px;
+        }
+
         .delete-btn {
             padding: 10px 20px;
             background: #f44336;
@@ -166,20 +200,42 @@
             {% if sources %}
                 <ul class="source-list">
                     {% for source in sources %}
-                    <li class="source-item">
+                    {% set stalled = is_stale(source) %}
+                    {% set state = 'stalled' if stalled else source.embedding_status.value %}
+                    <li class="source-item" data-source-id="{{ source.id }}">
                         <div class="source-info">
                             <h3>{{ source.name }}</h3>
                             <div class="source-meta">
+                                <span class="status-badge s-{{ state }}" data-role="badge">
+                                    {{ {'pending': '⏳ 대기',
+                                        'in_progress': '🔄 진행 중',
+                                        'completed': '✅ 완료',
+                                        'failed': '❌ 실패',
+                                        'stalled': '⚠️ 중단됨'}[state] }}
+                                </span>
                                 <span class="source-type">{{ source.type.value }}</span>
                                 <span>{{ source.location }}</span>
                             </div>
+
+                            <div class="source-progress" data-role="progress"
+                                 {% if state != 'in_progress' %}style="display:none"{% endif %}></div>
+
+                            {% if stalled %}
+                            <div class="source-hint">
+                                작업이 중단된 것 같습니다. AI 어시스턴트에게 "다시 임베딩해줘"라고 요청하면 새로 시작합니다.
+                            </div>
+                            {% elif source.embedding_status.value == 'failed' and source.embedding_error %}
+                            <div class="source-error">{{ source.embedding_error }}</div>
+                            {% endif %}
+
                             {% if source.last_synced_at %}
                             <div class="source-meta">
                                 마지막 동기화: {{ source.last_synced_at.strftime('%Y-%m-%d %H:%M') }}
                             </div>
                             {% endif %}
                         </div>
-                        <button class="delete-btn" onclick="deleteSource({{ source.id }}, '{{ source.name }}')">
+                        <button class="delete-btn" data-role="delete"
+                                data-id="{{ source.id }}" data-name="{{ source.name }}">
                             삭제
                         </button>
                     </li>
@@ -196,28 +252,103 @@
     </div>
 
     <script>
-        async function deleteSource(sourceId, sourceName) {
-            if (!confirm(`"${sourceName}" 소스를 삭제하시겠습니까?`)) {
-                return;
-            }
+        const USER_ID = {{ user_id | tojson }};
+        const STATUS_URL = `/user/${encodeURIComponent(USER_ID)}/sources/status`;
+        const POLL_MS = 2500;
 
+        const BADGE_LABEL = {
+            pending: '⏳ 대기',
+            in_progress: '🔄 진행 중',
+            completed: '✅ 완료',
+            failed: '❌ 실패',
+            stalled: '⚠️ 중단됨',
+        };
+
+        /* ---------- 삭제 ---------- */
+
+        // 이름을 onclick 문자열에 끼워 넣으면 따옴표가 든 이름에서 깨진다.
+        // data 속성으로 넘기고 리스너에서 읽는다.
+        document.querySelectorAll('[data-role="delete"]').forEach((btn) => {
+            btn.addEventListener('click', () => deleteSource(btn));
+        });
+
+        async function deleteSource(btn) {
+            const id = btn.dataset.id;
+            const name = btn.dataset.name;
+
+            if (!confirm(`"${name}" 소스를 삭제하시겠습니까?\n임베딩된 내용도 함께 삭제됩니다.`)) return;
+
+            btn.disabled = true;
             try {
-                const response = await fetch(`/user/{{ user_id }}/delete_source/${sourceId}`, {
-                    method: 'POST'
-                });
+                const res = await fetch(
+                    `/user/${encodeURIComponent(USER_ID)}/delete_source/${encodeURIComponent(id)}`,
+                    { method: 'POST' }
+                );
 
-                const data = await response.json();
+                if (!res.ok) {
+                    alert(`삭제 실패 (HTTP ${res.status})`);
+                    btn.disabled = false;
+                    return;
+                }
 
+                const data = await res.json();
                 if (data.success) {
-                    alert('소스가 삭제되었습니다');
                     location.reload();
                 } else {
                     alert('삭제 실패: ' + (data.message || '알 수 없는 오류'));
+                    btn.disabled = false;
                 }
             } catch (error) {
                 alert('삭제 중 오류 발생: ' + error.message);
+                btn.disabled = false;
             }
         }
+
+        /* ---------- 진행 중인 임베딩 따라가기 ---------- */
+
+        // 서버가 렌더한 상태는 페이지를 연 순간의 것이다.
+        // 임베딩이 돌고 있으면 배지와 진행률을 제자리에서 갱신한다.
+        async function pollStatus() {
+            try {
+                const res = await fetch(STATUS_URL);
+                if (!res.ok) return;
+
+                const data = await res.json();
+                let changed = false;
+
+                for (const src of data.sources || []) {
+                    const row = document.querySelector(`[data-source-id="${src.id}"]`);
+                    if (!row) continue;
+
+                    const badge = row.querySelector('[data-role="badge"]');
+                    const progress = row.querySelector('[data-role="progress"]');
+                    const running = src.status === 'in_progress';
+
+                    const label = BADGE_LABEL[src.status] || src.status;
+                    if (badge.textContent.trim() !== label) {
+                        badge.textContent = label;
+                        badge.className = `status-badge s-${src.status}`;
+                        changed = true;
+                    }
+
+                    progress.style.display = running ? '' : 'none';
+                    progress.textContent = running ? (src.progress_text || '진행 중') : '';
+                }
+
+                // 작업이 끝나면 통계와 동기화 시각까지 반영되도록 한 번 새로 그린다
+                if (changed && !data.active) {
+                    location.reload();
+                    return;
+                }
+
+                if (data.active) setTimeout(pollStatus, POLL_MS);
+            } catch (e) {
+                console.warn('상태 조회 실패', e);
+            }
+        }
+
+        // 열었을 때 이미 돌고 있는 작업이 있을 때만 폴링을 시작한다
+        if (document.querySelector('.s-in_progress')) pollStatus();
     </script>
 </body>
 </html>
