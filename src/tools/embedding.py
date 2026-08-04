@@ -5,12 +5,15 @@ from langchain_core.documents import Document
 from ..storage.database import SessionLocal
 from ..storage.models import Source, SourceType, EmbeddingStatus
 from ..llm_router import local_embedding
+from . import chatlog
 from .ingest_rules import git_file_dates, normalize_date, resolve_date, should_collect
 import os
 import hashlib
+import shutil
 import subprocess
 import json
 import threading
+from collections import Counter, defaultdict
 from pathlib import Path
 from datetime import datetime, timedelta
 import time
@@ -21,8 +24,12 @@ CHUNK_OVERLAP = 400
 DATA_DIR = Path("./data/sources")
 CHROMA_DIR = Path("./chroma_db")
 
-# 커밋 하나당 변경 요약에 나열할 최대 파일 수 (대량 변경 커밋의 볼륨 억제)
-MAX_FILES_PER_COMMIT = 20
+# 하루 요약에 남길 '집중 영역'(디렉토리) 수.
+# 파일을 하나하나 나열하면 부피의 절반을 먹으면서 정작 무엇을 했는지는 안 보인다.
+TOP_AREAS = 6
+
+# 하루치를 한 덩어리로 담는 문서 타입. 청크 분할에서 제외한다.
+DAILY_SUMMARY_TYPES = {"git_log", "agent_chatlog"}
 
 # 한 번에 임베딩할 청크 수. 작을수록 진행률이 촘촘해지고, 클수록 처리량이 높다.
 EMBED_BATCH_SIZE = 16
@@ -102,6 +109,14 @@ def _split_documents(documents: list[Document]) -> list[Document]:
 
     chunks = []
     for doc in documents:
+        if doc.metadata.get("source_type") in DAILY_SUMMARY_TYPES:
+            # 하루 요약은 그 자체로 완결된 한 덩어리다. 쪼개면 제목 줄과 맺음 줄이
+            # 본문에서 떨어져 고아 청크가 된다. 이 문서는 유사도가 아니라 날짜
+            # 메타데이터로 조회하므로 길이가 길어도 검색에 불리하지 않다.
+            doc.metadata["chunk_index"] = 0
+            chunks.append(doc)
+            continue
+
         doc_chunks = splitter.split_documents([doc])
 
         # 청크 인덱스 추가
@@ -213,30 +228,76 @@ def _collect_documents(
     return documents, skipped
 
 
-def _collect_git_files(source: Source, user_id: str) -> tuple[list[Document], dict[str, int]]:
-    """Git 저장소를 clone하고 텍스트 파일 수집"""
+def _git(*args: str) -> subprocess.CompletedProcess:
+    """git 명령을 실행한다."""
+    return subprocess.run(["git", *args], capture_output=True, text=True)
+
+
+def _clone_mode(repo_dir: Path) -> bool | None:
+    """
+    이미 받아둔 저장소가 bare 인지 판단한다.
+
+    Returns:
+        True=bare, False=작업 트리 있음, None=git 저장소가 아님
+    """
+    result = _git("-C", str(repo_dir), "rev-parse", "--is-bare-repository")
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip() == "true"
+
+
+def _sync_repo(source: Source, user_id: str, bare: bool) -> Path:
+    """
+    소스의 git 저장소를 로컬에 준비한다 (없으면 clone, 있으면 갱신).
+
+    bare 여부는 그 저장소로 무엇을 읽을지에 따라 갈린다:
+        bare=False (git)     — 파일 내용을 읽어야 하므로 작업 트리가 필요하다.
+        bare=True  (git_log) — git log 만 읽으므로 작업 트리를 두지 않는다.
+                               같은 저장소 기준 2.2MB → 752KB 로 줄고, 수집
+                               결과(numstat 포함)는 작업 트리가 있을 때와 같다.
+
+    갱신 명령도 함께 갈린다. bare 저장소에는 작업 트리가 없어 pull 이 실패하므로
+    fetch 를 써야 한다. 또 --bare 는 fetch refspec 을 설정하지 않아 fetch 가
+    조용히 아무것도 하지 않으므로, refspec 이 함께 잡히는 --mirror 로 받는다.
+
+    Returns:
+        준비된 저장소 경로
+    """
     repo_dir = DATA_DIR / user_id / source.name
 
-    # Clone 또는 Pull
     if repo_dir.exists():
-        # Git pull
-        result = subprocess.run(
-            ["git", "-C", str(repo_dir), "pull"],
-            capture_output=True,
-            text=True
-        )
-        if result.returncode != 0:
-            raise RuntimeError(f"Git pull 실패: {result.stderr}")
-    else:
-        # Git clone
-        repo_dir.parent.mkdir(parents=True, exist_ok=True)
-        result = subprocess.run(
-            ["git", "clone", source.location, str(repo_dir)],
-            capture_output=True,
-            text=True
-        )
-        if result.returncode != 0:
-            raise RuntimeError(f"Git clone 실패: {result.stderr}")
+        # 받아둔 형태가 지금 필요한 형태와 다르면 그대로 쓸 수 없다.
+        # refspec 이 없는 저장소도 갱신이 무언히 실패하므로 다시 받는다.
+        stale = _clone_mode(repo_dir) != bare
+        if not stale and bare:
+            refspec = _git("-C", str(repo_dir), "config", "--get", "remote.origin.fetch")
+            stale = not refspec.stdout.strip()
+
+        if stale:
+            shutil.rmtree(repo_dir, ignore_errors=True)
+        else:
+            # 갱신하지 않으면 clone 시점 이후의 커밋·문서가 영원히 들어오지 않는다
+            result = (
+                _git("-C", str(repo_dir), "fetch", "--prune", "origin") if bare
+                else _git("-C", str(repo_dir), "pull")
+            )
+            if result.returncode != 0:
+                verb = "fetch" if bare else "pull"
+                raise RuntimeError(f"Git {verb} 실패: {result.stderr}")
+            return repo_dir
+
+    repo_dir.parent.mkdir(parents=True, exist_ok=True)
+    options = ["--mirror"] if bare else []
+    result = _git("clone", *options, source.location, str(repo_dir))
+    if result.returncode != 0:
+        raise RuntimeError(f"Git clone 실패: {result.stderr}")
+
+    return repo_dir
+
+
+def _collect_git_files(source: Source, user_id: str) -> tuple[list[Document], dict[str, int]]:
+    """Git 저장소를 동기화하고 텍스트 파일 수집"""
+    repo_dir = _sync_repo(source, user_id, bare=False)
 
     # 파일별 최종 커밋 날짜를 한 번에 조회 (문서 날짜의 3순위 근거)
     git_dates = git_file_dates(repo_dir)
@@ -252,30 +313,27 @@ def _collect_git_files(source: Source, user_id: str) -> tuple[list[Document], di
     return documents, skipped
 
 
-def _collect_git_log(source: Source, user_id: str) -> tuple[list[Document], dict[str, int]]:
-    """Git 커밋 히스토리 수집 (message + author + date)"""
-    repo_dir = DATA_DIR / user_id / source.name
+def _read_commits(repo_dir: Path) -> tuple[list[dict], dict[str, int]]:
+    """
+    저장소의 커밋을 읽어 구조화한다.
 
-    # Clone (로그 조회용)
-    if not repo_dir.exists():
-        repo_dir.parent.mkdir(parents=True, exist_ok=True)
-        result = subprocess.run(
-            ["git", "clone", source.location, str(repo_dir)],
-            capture_output=True,
-            text=True
-        )
-        if result.returncode != 0:
-            raise RuntimeError(f"Git clone 실패: {result.stderr}")
+    수집 대상이 아닌 커밋은 사유와 함께 세어 돌려준다. 조용히 버리면 나중에
+    "커밋이 몇 개 들어왔는지"를 검산할 수 없고, 유실이 생겨도 드러나지 않는다.
 
-    # 커밋 메타데이터와 파일별 변경량(--numstat)을 한 번에 조회한다.
-    # raw diff 본문(+/- 라인)은 임베딩 품질이 낮고 볼륨이 크므로 수집하지 않고,
-    # '어떤 파일이 얼마나 바뀌었는지'만 구조화해 남긴다.
+    Returns:
+        (커밋 목록, {제외 사유: 건수})
+    """
     marker = "__C__"
     result = subprocess.run(
         [
             # core.quotepath=false: 한글 경로가 8진수로 이스케이프되는 것을 방지
             "git", "-C", str(repo_dir), "-c", "core.quotepath=false", "log",
-            f"--pretty=format:{marker}%H|%an|%ad|%s", "--date=short", "--numstat",
+            # %P(부모 목록)로 merge 커밋을 가려낸다
+            f"--pretty=format:{marker}%H|%P|%an|%ad|%s", "--date=short",
+            # 경로만 받는다. 증감 줄 수(--numstat)는 일지에 쓸모가 없다 —
+            # 긴 문서 하나가 수천 줄을 차지해 '많이 작업했다'는 잘못된 인상을 준다.
+            # 경로가 필요한 이유는 집중 영역 집계와 빈 커밋 판별 두 가지다.
+            "--name-only",
         ],
         capture_output=True,
         text=True
@@ -284,72 +342,128 @@ def _collect_git_log(source: Source, user_id: str) -> tuple[list[Document], dict
     if result.returncode != 0:
         raise RuntimeError(f"Git log 실패: {result.stderr}")
 
-    commits: list[dict] = []
+    parsed: list[dict] = []
     for line in result.stdout.splitlines():
         if line.startswith(marker):
-            parts = line[len(marker):].split("|", 3)
-            if len(parts) != 4:
+            parts = line[len(marker):].split("|", 4)
+            if len(parts) != 5:
                 continue
-            sha, author, raw_date, message = parts
-            commits.append({
+            sha, parents, author, raw_date, message = parts
+            parsed.append({
                 "sha": sha,
+                "parents": parents.split(),
                 "author": author,
                 "date": normalize_date(raw_date),
                 "message": message,
                 "files": [],
-                "added": 0,
-                "deleted": 0,
             })
-        elif line.strip() and commits:
-            # numstat 형식: "추가\t삭제\t경로" (바이너리는 "-\t-\t경로")
-            cols = line.split("\t")
-            if len(cols) < 3:
-                continue
-            added, deleted, path = cols[0], cols[1], cols[2]
-            n_add = int(added) if added.isdigit() else 0
-            n_del = int(deleted) if deleted.isdigit() else 0
-            current = commits[-1]
-            current["added"] += n_add
-            current["deleted"] += n_del
-            current["files"].append((path, n_add, n_del))
+        elif line.strip() and parsed:
+            parsed[-1]["files"].append(line.strip())
+
+    commits: list[dict] = []
+    skipped: dict[str, int] = {}
+
+    def note(reason: str):
+        skipped[reason] = skipped.get(reason, 0) + 1
+
+    for commit in parsed:
+        if len(commit["parents"]) > 1:
+            # merge 커밋에는 git 이 numstat 을 내보내지 않아 내용이 비어 있다.
+            # 합쳐진 각 커밋이 이미 따로 수집되므로 여기서 제외한다.
+            note("merge")
+        elif not commit["date"]:
+            # 날짜가 없으면 일지의 어느 날에도 배치할 수 없다
+            note("no_date")
+        elif not commit["files"]:
+            # 변경이 없는 커밋(--allow-empty)은 그날 한 일을 설명하지 못한다
+            note("empty")
+        else:
+            commits.append(commit)
+
+    return commits, skipped
+
+
+def _summarize_areas(files: list[str]) -> str:
+    """건드린 경로를 디렉토리 단위로 집계한다."""
+    areas = Counter(
+        f"{Path(p).parent}/" if str(Path(p).parent) != "." else "(루트)"
+        for p in files
+    )
+    return " · ".join(f"{name}({n})" for name, n in areas.most_common(TOP_AREAS))
+
+
+def _daily_commit_documents(
+    commits: list[dict], source: Source, user_id: str
+) -> list[Document]:
+    """
+    커밋을 날짜별로 묶어 하루당 문서 하나로 만든다.
+
+    커밋 단위로 저장하면 하루에 문서가 수십 개 생기는데, 사용자가 묻는 단위는
+    커밋이 아니라 하루다. 저장 단위를 질문 단위에 맞추면 그날 자료가 한 덩어리로
+    잡히고, 커밋마다 반복되던 작성자·날짜 줄도 한 번만 남는다.
+
+    일지가 답해야 할 것은 '무엇을 했는가'이므로 커밋 메시지를 본문으로 삼는다.
+    파일 목록은 디렉토리 집계로 줄여 '어디를 팠는가'만 남기고, 증감 줄 수는
+    싣지 않는다 — 문서 한 편이 수천 줄을 차지해 작업량을 왜곡하기 때문이다.
+    """
+    by_date: dict[str, list[dict]] = defaultdict(list)
+    for commit in commits:
+        by_date[commit["date"]].append(commit)
 
     documents = []
-    for commit in commits:
-        if not commit["date"]:
-            # 날짜가 없는 커밋은 일지에 배치할 수 없다
-            continue
+    for date, day in sorted(by_date.items()):
+        # git log 는 최신순이므로 하루 안에서는 시간순으로 되돌린다
+        day = list(reversed(day))
 
-        files = commit["files"]
+        paths = [path for commit in day for path in commit["files"]]
+        authors = sorted({commit["author"] for commit in day})
+
         lines = [
-            f"[{commit['date']}] {commit['message']}",
-            f"작성자: {commit['author']}",
-            f"변경: {len(files)}개 파일 (+{commit['added']} / -{commit['deleted']})",
+            f"[{date}] {source.name} — 커밋 {len(day)}건",
+            "",
+            "한 일:",
         ]
-        for path, n_add, n_del in files[:MAX_FILES_PER_COMMIT]:
-            lines.append(f"- {path} (+{n_add}/-{n_del})")
-        if len(files) > MAX_FILES_PER_COMMIT:
-            lines.append(f"- ... 외 {len(files) - MAX_FILES_PER_COMMIT}개 파일")
+        lines += [f"- {commit['message']}" for commit in day]
 
+        areas = _summarize_areas(paths)
+        if areas:
+            lines += ["", f"집중 영역: {areas}"]
+
+        content = "\n".join(lines)
         documents.append(Document(
-            page_content="\n".join(lines),
+            page_content=content,
             metadata={
                 "user_id": user_id,
                 "source_id": source.id,
                 "source_type": "git_log",
                 "source_name": source.name,
-                "commit_sha": commit["sha"],
-                "author": commit["author"],
-                "date": commit["date"],
+                # 하루치를 한 덩어리로 교체하기 위한 키.
+                # file_path 는 증분 판정(_delete_stale_chunks)이 쓰는 이름이다.
+                "file_path": f"commits/{date}",
+                "file_hash": hashlib.sha256(content.encode()).hexdigest(),
+                # 원본 git log 와 대조해 유실을 검산할 수 있도록 남긴다
+                "commit_shas": ",".join(commit["sha"][:8] for commit in day),
+                "commit_count": len(day),
+                "author": ", ".join(authors),
+                "date": date,
                 "date_origin": "git",
-                "message": commit["message"],
-                "files_changed": len(files),
-                "lines_added": commit["added"],
-                "lines_deleted": commit["deleted"],
-                "embedded_at": datetime.now().isoformat()
+                "files_changed": len(set(paths)),
+                "embedded_at": datetime.now().isoformat(),
             }
         ))
 
-    return documents, {}
+    return documents
+
+
+def _collect_git_log(source: Source, user_id: str) -> tuple[list[Document], dict[str, int]]:
+    """Git 커밋 히스토리를 날짜별로 묶어 수집"""
+    # 로그만 읽으므로 작업 트리 없이 받는다 (--mirror). 갱신은 fetch 로 이뤄진다.
+    repo_dir = _sync_repo(source, user_id, bare=True)
+
+    # 커밋 메타데이터와 파일별 변경량(--numstat)을 한 번에 조회한다.
+    # raw diff 본문(+/- 라인)은 임베딩 품질이 낮고 볼륨이 크므로 수집하지 않는다.
+    commits, skipped = _read_commits(repo_dir)
+    return _daily_commit_documents(commits, source, user_id), skipped
 
 
 def _collect_local_files(source: Source, user_id: str) -> tuple[list[Document], dict[str, int]]:
@@ -373,8 +487,24 @@ def _collect_local_files(source: Source, user_id: str) -> tuple[list[Document], 
 
 
 def _collect_chatlog(source: Source, user_id: str) -> tuple[list[Document], dict[str, int]]:
-    """에이전트 대화 로그 수집 (추후 구현)"""
-    return [], {}
+    """
+    에이전트 대화 로그 수집.
+
+    location 은 Claude Code 트랜스크립트가 모인 디렉토리를 가리킨다
+    (예: ~/.claude/projects/-Users-me-work-myproject).
+    """
+    root = Path(source.location).expanduser()
+
+    if not root.exists():
+        raise FileNotFoundError(f"대화 로그 경로가 존재하지 않습니다: {source.location}")
+
+    if not any(root.glob("*.jsonl")):
+        # 경로는 있는데 트랜스크립트가 없으면 잘못 지정한 것이다.
+        # 0건 수집으로 조용히 성공 처리하면 사용자가 알 방법이 없다.
+        raise FileNotFoundError(f"트랜스크립트(.jsonl)가 없습니다: {source.location}")
+
+    turns, skipped = chatlog.read_turns(root)
+    return chatlog.daily_documents(turns, source, user_id), skipped
 
 
 def _collect_memsearch(source: Source, user_id: str) -> tuple[list[Document], dict[str, int]]:
