@@ -73,7 +73,7 @@ def repo_path(data_dir: Path) -> Path:
 
 
 class TestGitLogSync:
-    """git_log 타입 — 작업 트리 없이 받고 fetch 로 갱신한다."""
+    """git_log 타입 — 파일 본문 없이 받고(blob:none) fetch 로 갱신한다."""
 
     def test_clone_수집(self, source):
         """커밋 2건이 같은 날이므로 하루 문서 하나로 묶인다."""
@@ -84,21 +84,33 @@ class TestGitLogSync:
         assert "feat: 첫 커밋" in docs[0].page_content
         assert "feat: 둘째 커밋" in docs[0].page_content
 
-    def test_작업_트리_없이_받는다(self, source, data_dir):
+    def test_체크아웃_없이_받는다(self, source, data_dir):
+        """--no-checkout — 커밋 메타데이터만 읽으므로 작업 트리가 필요 없다."""
         embedding._collect_git_log(source, "tester")
         repo = repo_path(data_dir)
 
-        assert git("-C", str(repo), "rev-parse", "--is-bare-repository").strip() == "true"
         assert not (repo / "first.md").exists()
 
-    def test_fetch_refspec_이_설정된다(self, source, data_dir):
-        """--bare 는 refspec 이 없어 fetch 가 조용히 아무것도 하지 않는다."""
+    def test_blob_을_받지_않는다(self, source, data_dir):
+        """--filter=blob:none — 파일 본문은 임베딩에 쓰이지 않는다.
+
+        로컬 origin 은 필터를 무시하고 객체를 전부 넘기지만(git 의 제약),
+        설정은 남으므로 어떤 형태로 요청했는지는 여기서 잠글 수 있다.
+        """
         embedding._collect_git_log(source, "tester")
-        refspec = git("-C", str(repo_path(data_dir)), "config", "--get", "remote.origin.fetch")
-        assert refspec.strip() == "+refs/*:refs/*"
+        repo = repo_path(data_dir)
+
+        assert embedding._is_partial_clone(repo)
+        assert git(
+            "-C", str(repo), "config", "--get", "remote.origin.partialclonefilter"
+        ).strip() == "blob:none"
 
     def test_클론_이후의_커밋이_재수집에_들어온다(self, source, origin):
-        """C2 회귀 방지 — 갱신을 빠뜨리면 커밋 수가 2 그대로 남는다."""
+        """C2 회귀 방지 — 갱신을 빠뜨리면 커밋 수가 2 그대로 남는다.
+
+        fetch 는 refs/remotes/origin/* 만 앞당기므로, 조회가 --all 이 아니면
+        새 커밋이 로컬 브랜치 뒤에 가려 보이지 않는다.
+        """
         before, _ = embedding._collect_git_log(source, "tester")
         commit(origin, "third.md", "feat: 클론 이후 커밋")
 
@@ -107,22 +119,33 @@ class TestGitLogSync:
         assert commit_count(after) == commit_count(before) + 1
         assert "feat: 클론 이후 커밋" in "".join(d.page_content for d in after)
 
-    def test_작업_트리_있는_옛_클론은_자동_전환된다(self, source, origin, data_dir):
-        """이전 방식으로 받아둔 저장소가 남아 있어도 fetch 가 가능한 형태로 바뀐다."""
-        repo = repo_path(data_dir)
-        repo.parent.mkdir(parents=True, exist_ok=True)
-        git("clone", "-q", str(origin), str(repo))
-        assert (repo / "first.md").exists()
+    def test_다른_브랜치의_커밋도_들어온다(self, source, origin):
+        """--all — main 에 병합되지 않은 브랜치의 작업도 그날 한 일이다."""
+        git("checkout", "-q", "-b", "side", cwd=origin)
+        commit(origin, "side.md", "feat: 곁가지 작업")
+        git("checkout", "-q", "main", cwd=origin)
 
         docs, _ = embedding._collect_git_log(source, "tester")
 
+        assert "feat: 곁가지 작업" in "".join(d.page_content for d in docs)
+
+    def test_옛_mirror_클론은_자동_전환된다(self, source, origin, data_dir):
+        """--mirror 로 받아둔 저장소가 남아 있어도 지금 형태로 다시 받는다."""
+        repo = repo_path(data_dir)
+        repo.parent.mkdir(parents=True, exist_ok=True)
+        git("clone", "-q", "--mirror", str(origin), str(repo))
         assert git("-C", str(repo), "rev-parse", "--is-bare-repository").strip() == "true"
-        assert not (repo / "first.md").exists()
+
+        docs, _ = embedding._collect_git_log(source, "tester")
+
+        assert git("-C", str(repo), "rev-parse", "--is-bare-repository").strip() == "false"
+        assert embedding._is_partial_clone(repo)
         assert commit_count(docs) == 2
 
 
 class TestDailyGrouping:
-    """커밋을 날짜별로 묶고, 내용 없는 커밋은 사유와 함께 제외한다."""
+    """커밋을 날짜별로 묶는다. 조회가 커밋 메타데이터만 읽으므로 파일 기반
+    판별(merge·빈 커밋 제외, 집중 영역 집계)은 하지 않는다."""
 
     def test_날짜별로_문서가_하나씩_생긴다(self, source, origin):
         commit(origin, "a.md", "feat: 어제 일", date="2026-01-01T10:00:00")
@@ -146,37 +169,43 @@ class TestDailyGrouping:
 
         assert body.index("feat: 먼저") < body.index("feat: 나중")
 
-    def test_merge_커밋은_사유와_함께_제외된다(self, source, origin):
-        """C4 — merge 에는 numstat 이 없어 '변경 0개' 빈 문서가 된다."""
+    def test_merge_커밋도_그대로_들어온다(self, source, origin):
+        """조회가 파일 목록을 읽지 않으므로 merge 를 가려낼 근거가 없다.
+
+        merge 메시지("Merge branch ...")가 하루 요약의 '한 일'에 섞인다.
+        되살리려면 --pretty 에 %P 를 넣어 부모가 둘인 커밋을 걸러야 한다.
+        """
         git("checkout", "-q", "-b", "side", cwd=origin)
         commit(origin, "side.md", "feat: 곁가지")
         git("checkout", "-q", "main", cwd=origin)
         git("merge", "-q", "--no-ff", "-m", "Merge side into main", "side", cwd=origin)
 
         docs, skipped = embedding._collect_git_log(source, "tester")
+        body = "".join(d.page_content for d in docs)
 
-        assert skipped.get("merge") == 1
-        assert "Merge side into main" not in "".join(d.page_content for d in docs)
-        assert "feat: 곁가지" in "".join(d.page_content for d in docs)
+        assert "Merge side into main" in body
+        assert "feat: 곁가지" in body
+        assert "merge" not in skipped
 
-    def test_빈_커밋은_사유와_함께_제외된다(self, source, origin):
-        """C4 — 변경이 없는 커밋은 그날 한 일을 설명하지 못한다."""
+    def test_빈_커밋도_그대로_들어온다(self, source, origin):
+        """변경 없는 커밋(--allow-empty)을 가려내려면 파일 목록이 필요하다."""
         git("commit", "-q", "--allow-empty", "-m", "chore: 빈 커밋", cwd=origin)
 
         docs, skipped = embedding._collect_git_log(source, "tester")
 
-        assert skipped.get("empty") == 1
-        assert "chore: 빈 커밋" not in "".join(d.page_content for d in docs)
+        assert "chore: 빈 커밋" in "".join(d.page_content for d in docs)
+        assert "empty" not in skipped
+        assert commit_count(docs) == 3  # 원래 2건 + 빈 커밋 1건
 
-    def test_제외_건수가_기록된다(self, source, origin):
-        """C5 — 조용히 버리면 유실을 검산할 수 없다."""
+    def test_제외_사유는_날짜_없음만_남는다(self, source, origin):
+        """C5 — 버릴 때는 사유와 함께 센다. 지금 버리는 것은 날짜 없는 커밋뿐이다."""
         git("commit", "-q", "--allow-empty", "-m", "chore: 빈 커밋 1", cwd=origin)
         git("commit", "-q", "--allow-empty", "-m", "chore: 빈 커밋 2", cwd=origin)
 
         docs, skipped = embedding._collect_git_log(source, "tester")
 
-        assert skipped == {"empty": 2}
-        assert commit_count(docs) == 2  # 원래 있던 커밋 2건은 그대로
+        assert skipped == {}
+        assert commit_count(docs) == 4
 
     def test_원본_커밋과_대조할_수_있다(self, source, origin):
         """metadata 의 sha 목록으로 유실 여부를 검산할 수 있어야 한다."""
@@ -187,20 +216,27 @@ class TestDailyGrouping:
 
         assert stored == truth
 
-    def test_파일_목록_대신_영역을_집계한다(self, source, origin):
-        commit(origin, "x.md", "feat: 루트 파일")
+    def test_본문은_커밋_메시지뿐이다(self, source, origin):
+        """파일 경로는 조회 자체가 읽지 않으므로 문서에 남지 않는다."""
         (origin / "src").mkdir()
         (origin / "src" / "a.md").write_text("a", encoding="utf-8")
-        (origin / "src" / "b.md").write_text("b", encoding="utf-8")
         git("add", "-A", cwd=origin)
         git("commit", "-q", "-m", "feat: src 작업", cwd=origin)
 
         docs, _ = embedding._collect_git_log(source, "tester")
         body = "".join(d.page_content for d in docs)
 
-        assert "집중 영역:" in body
-        assert "src/(2)" in body
-        assert "- src/a.md (+1/-0)" not in body  # 파일별 증감은 싣지 않는다
+        assert "feat: src 작업" in body
+        assert "집중 영역:" not in body
+        assert "src/a.md" not in body
+
+    def test_작성자_메일은_본문과_메타데이터에_남지_않는다(self, source, origin):
+        """%ae 를 읽되 싣지는 않는다 — 같은 사람이 주소마다 갈라지기 때문."""
+        docs, _ = embedding._collect_git_log(source, "tester")
+
+        assert docs[0].metadata["author"] == "tester"
+        assert "test@example.com" not in docs[0].page_content
+        assert "test@example.com" not in str(docs[0].metadata)
 
     def test_하루_요약은_청크로_쪼개지_않는다(self, source, origin):
         """제목 줄과 '집중 영역'이 본문에서 떨어지면 고아 청크가 된다."""
