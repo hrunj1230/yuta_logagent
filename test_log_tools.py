@@ -10,6 +10,8 @@
 from src.tools.log import retriever_vectordb, maker_logfile
 from src.unified_controller_single import unified_agent as single_agent
 
+USER_ID = "hrunj1230"
+
 
 def print_separator(title: str):
     """구분선 출력"""
@@ -24,11 +26,11 @@ def test_retriever_vectordb():
 
     # 테스트 1: 정확한 날짜 검색
     print("📋 테스트 1: 정확한 날짜 형식으로 검색")
-    print(f"요청: retriever_vectordb('2026-07-28', '3')")
+    print(f"요청: retriever_vectordb('2026-07-28')")
     try:
         result = retriever_vectordb.invoke({
             "date": "2026-07-28",
-            "reference_len": "3"
+            "user_id": USER_ID
         })
         print(f"결과:\n{result}\n")
     except Exception as e:
@@ -36,23 +38,24 @@ def test_retriever_vectordb():
 
     # 테스트 2: 다양한 날짜 형식
     print("📋 테스트 2: 다른 날짜 형식으로 검색")
-    print(f"요청: retriever_vectordb('2026년 07월 28일', '2')")
+    print(f"요청: retriever_vectordb('2026년 07월 28일')")
     try:
         result = retriever_vectordb.invoke({
             "date": "2026년 07월 28일",
-            "reference_len": "2"
+            "user_id": USER_ID
         })
         print(f"결과:\n{result}\n")
     except Exception as e:
         print(f"오류: {str(e)}\n")
 
-    # 테스트 3: 기본 개수 (reference_len 미지정)
-    print("📋 테스트 3: 기본 검색 개수 테스트")
-    print(f"요청: retriever_vectordb('2026-07-27', '')")
+    # 테스트 3: 기간 조회
+    print("📋 테스트 3: 기간 조회 테스트")
+    print(f"요청: retriever_vectordb('2026-07-27', end_date='2026-07-28')")
     try:
         result = retriever_vectordb.invoke({
             "date": "2026-07-27",
-            "reference_len": ""
+            "user_id": USER_ID,
+            "end_date": "2026-07-28"
         })
         print(f"결과:\n{result}\n")
     except Exception as e:
