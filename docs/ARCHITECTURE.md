@@ -160,9 +160,10 @@ Jinja2 템플릿(`templates/`)과 REST API를 함께 제공하는 단일 라우�
 ```
 "2026-07-30 일지 작성해줘"
     → POST /unified_agent
-    → retriever_vectordb(date, reference_len, user_id)
-        1차: ChromaDB where={"date": ...} 메타데이터 필터
-        2차(실패 시): similarity_search 폴백
+    → retriever_vectordb(date, user_id, end_date="")
+        ChromaDB where={"date": ...} 메타데이터 필터만 사용 (유사도 폴백 없음)
+        개수 제한 없이 그날 문서를 모두 가져오고, 분량이 넘치면
+        커밋의 파일 변경 목록부터 덜어낸다 (MAX_RESULT_CHARS)
     → Claude가 검색 결과를 분석해 마크다운 일지 작성
     → maker_logfile(date, content) → logs/YYYY.MM.DD_log.md 저장
 ```
