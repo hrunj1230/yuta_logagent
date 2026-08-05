@@ -25,7 +25,9 @@ for name in $(aws ssm get-parameters-by-path --path /yuta-logagent/prod/ --with-
   ENV_ARGS="$ENV_ARGS -e ${key}=${value}"
 done
 
-mkdir -p "$DATA_DIR/chroma_db" "$DATA_DIR/data"
+# logs/*.md가 일지의 진실 공급원이고 chroma_db는 파생 색인이므로,
+# 색인만 남고 원본이 사라지지 않도록 logs도 같이 영구 마운트한다.
+mkdir -p "$DATA_DIR/chroma_db" "$DATA_DIR/data" "$DATA_DIR/logs"
 touch "$DATA_DIR/users.db"
 
 docker rm -f yuta-logagent 2>/dev/null || true
@@ -38,6 +40,7 @@ docker run -d \
   -v "$DATA_DIR/users.db:/app/users.db" \
   -v "$DATA_DIR/chroma_db:/app/chroma_db" \
   -v "$DATA_DIR/data:/app/data" \
+  -v "$DATA_DIR/logs:/app/logs" \
   $ENV_ARGS \
   "$IMAGE"
 
