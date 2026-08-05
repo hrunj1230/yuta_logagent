@@ -7,12 +7,17 @@ InMemorySaver checkpointer를 통해 사용자별 대화 기록을 유지합니�
 
 토큰 비용에 대하여:
     LLM API는 무상태라 매 요청에 대화 기록 전체를 다시 싣는다. 그래서 이 모듈은
-    두 가지로 재전송량을 줄인다.
+    세 가지로 재전송량을 줄인다.
 
     1) 턴이 끝나면 도구 호출·결과를 기록에서 걷어낸다 (prune_tool_traffic).
        조회 결과 한 건이 1만 토큰을 넘는데 일지를 쓰고 나면 쓸 일이 없다.
     2) 도구 스키마와 시스템 프롬프트를 프롬프트 캐시에 올린다 (create_system_message).
        매 요청 반복되는 3,184 토큰이 정가의 10%로 청구된다.
+    3) 종결 도구가 성공하면 마무리 호출을 건너뛴다 (route_after_tools).
+       1) 이 턴 사이의 재전송을 막는다면 이쪽은 턴 안의 재전송을 막는다.
+       일지 저장 직후는 자료 원문과 방금 쓴 본문이 함께 올라와 있는, 대화가
+       가장 무거운 지점이다. 그걸 다시 실어 보내고 받아오던 것이 "✅ 저장 완료"
+       한 줄이었다 — maker_logfile 이 이미 돌려준 문장이다.
 
     적중 여부는 매 호출 로그의 'Tokens:' 줄에서 확인할 수 있다.
 
@@ -206,6 +211,72 @@ def describe_usage(result) -> str:
     return " · ".join(parts)
 
 
+# 결과 문자열이 그대로 사용자에게 보여줄 답변이 되는 도구들.
+# 이 도구를 부르고 나면 LLM 에게 "뭐라고 말할까"를 물을 필요가 없다.
+#
+# 왜 maker_logfile 만인가:
+#     낭비의 크기는 그 시점 대화의 크기에 비례한다. 일지를 저장하는 순간은
+#     자료 원문(하루치 1만 토큰↑)과 방금 쓴 일지 본문이 둘 다 기록에 올라와
+#     있는, 대화가 가장 무거운 지점이다. 그걸 전부 다시 실어 보내고 받아오는
+#     것이 "✅ 저장 완료" 한 줄이었다.
+#
+#     add_source_to_db 처럼 다음 도구로 이어져야 하는 것들은 넣으면 안 된다.
+#     연쇄가 끊긴다. embed_source 는 종결이긴 하나 그 시점 대화가 가벼워서
+#     아낄 것이 없고, 진행 상황을 덧붙여 설명하는 편이 낫다.
+TERMINAL_TOOLS = {"maker_logfile"}
+
+
+def _last_tool_calls(messages: list[AnyMessage]) -> tuple[list[dict], list[ToolMessage]]:
+    """방금 끝난 도구 실행 한 묶음을 (호출, 결과) 로 돌려준다."""
+    results: list[ToolMessage] = []
+
+    for message in reversed(messages):
+        if isinstance(message, ToolMessage):
+            results.append(message)
+            continue
+        if isinstance(message, AIMessage) and message.tool_calls:
+            return message.tool_calls, list(reversed(results))
+        break
+
+    return [], []
+
+
+def route_after_tools(state: SingleAgentState) -> Literal["agent", "finalize"]:
+    """
+    도구가 끝난 뒤 LLM 을 한 번 더 부를지 정한다.
+
+    종결 도구만 불렀고 전부 성공했다면 부르지 않는다. 실패했다면 부른다 —
+    실패는 사정을 설명하고 다음 수를 제안해야 하므로 판단이 필요하다.
+    """
+    tool_calls, results = _last_tool_calls(state["messages"])
+
+    if not tool_calls or not results:
+        return "agent"
+
+    if any(call["name"] not in TERMINAL_TOOLS for call in tool_calls):
+        return "agent"
+
+    if any(result.status == "error" for result in results):
+        return "agent"
+
+    return "finalize"
+
+
+def finalize_from_tool(state: SingleAgentState) -> dict:
+    """
+    도구 결과를 그대로 최종 답변으로 세운다 (LLM 호출 없음).
+
+    prune 이 도구 기록을 걷어내므로, 여기서 답변을 하나 세워 두지 않으면
+    대화에 사람의 말만 남고 무슨 일이 있었는지가 사라진다.
+    """
+    _, results = _last_tool_calls(state["messages"])
+    answer = "\n\n".join(str(result.content) for result in results)
+
+    print("[UNIFIED AGENT] 도구 결과를 그대로 답변으로 사용합니다 (LLM 호출 생략).")
+
+    return {"messages": [AIMessage(content=answer)]}
+
+
 def prune_tool_traffic(state: SingleAgentState) -> dict:
     """
     턴이 끝나면 도구 호출과 그 결과를 대화 기록에서 걷어낸다.
@@ -253,6 +324,7 @@ def _build_graph(user_id: str):
     # 노드 추가
     builder.add_node("agent", unified_agent_node)
     builder.add_node("tools", tool_node)
+    builder.add_node("finalize", finalize_from_tool)
     builder.add_node("prune", prune_tool_traffic)
 
     # 엣지 추가.
@@ -267,7 +339,17 @@ def _build_graph(user_id: str):
             "__end__": "prune",
         },
     )
-    builder.add_edge("tools", "agent")
+    # 종결 도구가 성공했으면 agent 로 돌아가지 않는다. 돌아가면 대화가 가장
+    # 무거운 시점에 전체를 다시 실어 보내고 "✅ 저장 완료" 한 줄을 받아온다.
+    builder.add_conditional_edges(
+        "tools",
+        route_after_tools,
+        {
+            "agent": "agent",
+            "finalize": "finalize",
+        },
+    )
+    builder.add_edge("finalize", "prune")
     builder.add_edge("prune", END)
 
     # Checkpointer와 함께 컴파일
