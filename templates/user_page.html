@@ -236,6 +236,32 @@
         }
         .settings-link:hover { text-decoration: underline; }
 
+        .journal-summary { font-size: 13px; color: #666; line-height: 1.7; }
+        .journal-summary .count { font-weight: 600; color: #333; }
+
+        /* 미등록 일지는 검색에 안 잡히므로 눈에 띄어야 한다 */
+        .journal-warn {
+            display: block;
+            margin-top: 6px;
+            color: #ef6c00;
+            font-weight: 500;
+        }
+
+        .journal-btn {
+            display: block;
+            margin-top: 14px;
+            padding: 10px;
+            background: #667eea;
+            color: white;
+            text-align: center;
+            text-decoration: none;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 500;
+            transition: background 0.2s;
+        }
+        .journal-btn:hover { background: #5568d3; }
+
         .stat {
             display: flex;
             justify-content: space-between;
@@ -306,6 +332,12 @@
                     </div>
                     <a class="settings-link" href="/user/{{ user_id }}/settings">설정에서 소스 관리 →</a>
                     <a class="settings-link" href="/debugger?user_id={{ user_id }}">🧭 아키텍처 디버거 →</a>
+                </div>
+
+                <div class="card">
+                    <h2><span class="icon">📓</span> 일지</h2>
+                    <div id="journal-summary" class="journal-summary">불러오는 중…</div>
+                    <a class="journal-btn" href="/user/{{ user_id }}/journals">일지 관리 열기 →</a>
                 </div>
 
                 <div class="card">
@@ -513,7 +545,34 @@
             }
         });
 
+        async function refreshJournals() {
+            const box = document.getElementById('journal-summary');
+
+            try {
+                const res = await fetch(`/user/${encodeURIComponent(USER_ID)}/journals/summary`);
+                if (!res.ok) throw new Error(res.status);
+                const data = await res.json();
+
+                if (!data.total) {
+                    box.innerHTML = '아직 만들어진 일지가 없습니다.<br>대화창에서 날짜를 말해 만들어 보세요.';
+                    return;
+                }
+
+                let html = `<span class="count">${data.total}건</span> 저장됨`;
+                if (data.latest) html += ` · 최근 ${data.latest}`;
+                // 미등록은 '일지는 있는데 검색이 안 되는' 상태다. 조용히 두면 모른다.
+                if (data.unindexed) {
+                    html += `<span class="journal-warn">⚠ ${data.unindexed}건이 검색에 등록되지 않았습니다</span>`;
+                }
+                box.innerHTML = html;
+            } catch (e) {
+                // 일시적인 실패로 화면을 흔들지 않는다 — 링크는 그대로 쓸 수 있다
+                box.textContent = '일지 현황을 불러오지 못했습니다.';
+            }
+        }
+
         refreshSources();
+        refreshJournals();
     </script>
 </body>
 </html>

@@ -1029,8 +1029,8 @@ def test_performance_comparison():
 # src/tools/log.py
 
 @tool
-def retriever_vectordb(date: str, reference_len: str) -> str:
-    """날짜 기반 VectorDB 검색"""
+def retriever_vectordb(date: str, user_id: str, end_date: str = "") -> str:
+    """날짜 기반 VectorDB 검색 (개수 제한 없음, 분량 예산으로 조절)"""
     # 구현...
 
 @tool
@@ -1104,7 +1104,7 @@ def test_retriever_vectordb():
     """날짜 검색 도구 테스트"""
     result = retriever_vectordb.invoke({
         "date": "2026-07-28",
-        "reference_len": "3"
+        "user_id": "hrunj1230"
     })
     assert result
 

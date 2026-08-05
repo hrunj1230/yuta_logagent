@@ -23,4 +23,16 @@ dependencies = [
     "python-multipart>=0.0.5",
     "sentence-transformers>=5.6.1",
     "langchain-google-genai>=4.3.2",
+    "langchain-openai>=1.4.1",
 ]
+
+[tool.pytest.ini_options]
+# 자동 수집 대상은 tests/ 로 한정한다.
+#
+# 저장소 루트의 test_date_search.py, test_log_tools.py 는 이름만 test_ 로
+# 시작할 뿐 개발/디버깅용 실행 스크립트다 (ARCHITECTURE.md 참조). 이들은
+# assert 없이 예외를 삼켜 출력만 하므로 pytest 가 수집해도 절대 실패하지
+# 않는 허수 테스트가 되고, 그러면서 실제 사용자 컬렉션에 쓰기를 하고
+# LLM 을 호출한다. 수집 범위를 좁혀 pytest 실행이 실데이터를 건드리지
+# 않도록 한다. 스크립트는 직접 실행해서 쓴다.
+testpaths = ["tests"]

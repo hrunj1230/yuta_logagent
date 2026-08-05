@@ -187,8 +187,9 @@ def request_source_type_clarification() -> str:
 **local** - 서버의 로컬 디렉토리 사용
    예: /path/to/local/directory
 
-**agent_chatlog** - 에이전트 대화 로그 파일
-   예: /logs/chat_history.json
+**agent_chatlog** - AI 코딩 에이전트의 대화 트랜스크립트 디렉토리
+   예: ~/.claude/projects/-Users-me-work-myproject
+   (해당 폴더의 .jsonl 파일에서 사람이 나눈 대화만 뽑아 날짜별로 저장합니다)
 
 **memsearch** - 기존 메모리 검색 데이터 연결
    예: /.memsearch

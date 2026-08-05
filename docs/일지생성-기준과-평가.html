@@ -1,0 +1,963 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>일지에 무엇을 담을 것인가 — 기준을 먼저 정하고 평가를 다시 만든 기록</title>
+<style>
+  :root{
+    --paper:#F5F7F6; --card:#FFF; --sunk:#EAEEEC;
+    --ink:#1A211F; --ink-soft:#3E4A46; --muted:#6C7A75; --rule:#D8E0DC;
+    --celadon:#3F6F63; --celadon-dim:#7FA69B; --wash:#E5EEEB;
+    --seal:#A83A2E; --seal-wash:#F7E8E5;
+    --amber:#8A6420; --amber-wash:#FAF0DC;
+    --code:#EEF2F0;
+    --f-kr:Pretendard,-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Noto Sans KR","Malgun Gothic",sans-serif;
+    --f-mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{
+      --paper:#0F1514; --card:#161E1C; --sunk:#0B100F;
+      --ink:#E3EAE7; --ink-soft:#BAC6C1; --muted:#87968F; --rule:#293632;
+      --celadon:#82C0AD; --celadon-dim:#4E7F72; --wash:#182A26;
+      --seal:#E4877C; --seal-wash:#2B1A18;
+      --amber:#D6AC5E; --amber-wash:#2A2114;
+      --code:#0C1211;
+    }
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
+  body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--f-kr);
+       font-size:16px;line-height:1.85;word-break:keep-all;overflow-wrap:anywhere}
+  .wrap{max-width:54rem;margin:0 auto;padding:0 1.4rem 7rem}
+
+  header.top{padding:4rem 0 2rem;border-bottom:1px solid var(--rule)}
+  .kicker{font-family:var(--f-mono);font-size:.72rem;letter-spacing:.16em;
+          text-transform:uppercase;color:var(--muted)}
+  h1{font-size:clamp(1.8rem,5vw,2.6rem);line-height:1.3;letter-spacing:-.02em;
+     margin:.8rem 0 0;text-wrap:balance}
+  .sub{color:var(--ink-soft);font-size:1.05rem;margin-top:1rem}
+  .facts{display:flex;flex-wrap:wrap;gap:.4rem 1.6rem;margin-top:1.4rem;padding-top:1rem;
+         border-top:1px solid var(--rule);font-family:var(--f-mono);font-size:.75rem;color:var(--muted)}
+
+  nav.toc{margin:2.5rem 0 0;padding:1.4rem 1.6rem;background:var(--card);
+          border:1px solid var(--rule);border-radius:6px}
+  nav.toc h2{font-size:.78rem;font-family:var(--f-mono);letter-spacing:.14em;
+             text-transform:uppercase;color:var(--muted);margin:0 0 .9rem;font-weight:400}
+  nav.toc ol{margin:0;padding-left:1.3rem}
+  nav.toc ol ol{padding-left:1.1rem;margin:.35rem 0}
+  nav.toc li{margin:.3rem 0;font-size:.94rem}
+  nav.toc a{color:var(--ink-soft);text-decoration:none}
+  nav.toc a:hover{color:var(--celadon);text-decoration:underline}
+
+  section{padding-top:3.6rem}
+  h2{font-size:clamp(1.35rem,3.4vw,1.75rem);letter-spacing:-.015em;margin:0 0 .4rem;text-wrap:balance}
+  h3{font-size:1.12rem;margin:2.2rem 0 .5rem;letter-spacing:-.01em;text-wrap:balance}
+  h4{font-size:.98rem;margin:1.5rem 0 .4rem;color:var(--ink-soft)}
+  .sec-num{font-family:var(--f-mono);font-size:.75rem;color:var(--celadon);letter-spacing:.12em}
+  p{margin:1rem 0;color:var(--ink-soft)}
+  p strong,li strong,td strong{color:var(--ink);font-weight:700}
+  ul,ol{color:var(--ink-soft);padding-left:1.35rem}
+  li{margin:.45rem 0}
+  a{color:var(--celadon)}
+  em{font-style:normal;background:var(--wash);padding:.05em .3em;border-radius:2px}
+
+  code{font-family:var(--f-mono);font-size:.86em;background:var(--code);
+       padding:.12em .38em;border-radius:3px;color:var(--ink)}
+  pre{background:var(--code);border:1px solid var(--rule);border-radius:5px;
+      padding:1rem 1.1rem;overflow-x:auto;white-space:pre;tab-size:2;
+      font-family:var(--f-mono);font-size:.79rem;line-height:1.7;color:var(--ink);margin:1.1rem 0}
+  pre code{background:none;padding:0;font-size:inherit}
+  .cm{color:var(--muted)} .del{color:var(--seal)} .add{color:var(--celadon);font-weight:600}
+
+  .callout{margin:1.6rem 0;padding:1.1rem 1.3rem;border-radius:0 5px 5px 0;
+           background:var(--wash);border-left:3px solid var(--celadon)}
+  .callout.warn{background:var(--seal-wash);border-left-color:var(--seal)}
+  .callout.note{background:var(--amber-wash);border-left-color:var(--amber)}
+  .callout .label{font-family:var(--f-mono);font-size:.68rem;letter-spacing:.13em;
+                  text-transform:uppercase;color:var(--celadon);display:block;margin-bottom:.4rem}
+  .callout.warn .label{color:var(--seal)} .callout.note .label{color:var(--amber)}
+  .callout p{margin:.4rem 0;color:var(--ink-soft)}
+  .callout p:first-of-type{margin-top:0} .callout p:last-child{margin-bottom:0}
+
+  figure{margin:1.8rem 0}
+  figcaption{font-size:.82rem;color:var(--muted);margin-top:.7rem;padding-left:.2rem;line-height:1.6}
+  .diagram{background:var(--card);border:1px solid var(--rule);border-radius:6px;
+           padding:1.4rem;overflow-x:auto}
+
+  /* 계층 다이어그램 */
+  .layers{display:flex;flex-direction:column;gap:.5rem;min-width:19rem}
+  .layer{border:1px solid var(--rule);border-radius:5px;padding:.8rem .95rem;background:var(--sunk)}
+  .layer.accent{border-color:var(--celadon-dim);background:var(--wash)}
+  .layer.ghost{border-style:dashed;opacity:.6}
+  .layer-name{font-weight:700;font-size:.9rem}
+  .layer-body{font-family:var(--f-mono);font-size:.7rem;color:var(--muted);line-height:1.65;margin-top:.25rem}
+  .down{text-align:center;color:var(--muted);font-family:var(--f-mono);font-size:.8rem;line-height:1}
+
+  /* 흐름 다이어그램 */
+  .flow{display:flex;flex-direction:column;gap:.45rem;min-width:19rem}
+  .step{display:grid;grid-template-columns:1.7rem 1fr;gap:.75rem;align-items:start;
+        border:1px solid var(--rule);border-radius:5px;padding:.7rem .85rem;background:var(--sunk)}
+  .step.exact{border-color:var(--celadon-dim);background:var(--wash)}
+  .step-n{font-family:var(--f-mono);font-size:.72rem;color:var(--celadon);font-weight:700;
+          text-align:center;padding-top:.15rem}
+  .step-t{font-size:.88rem}
+  .step-d{font-family:var(--f-mono);font-size:.69rem;color:var(--muted);margin-top:.2rem}
+
+  /* 막대 비교 */
+  .bars{display:flex;flex-direction:column;gap:.75rem;min-width:19rem}
+  .bar-row{display:grid;grid-template-columns:7.5rem 1fr 3.2rem;gap:.7rem;align-items:center;font-size:.85rem}
+  .bar-track{height:11px;background:var(--sunk);border-radius:6px;overflow:hidden;position:relative}
+  .bar-fill{height:100%;border-radius:6px}
+  .b-old{background:var(--seal-dim,#C97C71);background:var(--seal);opacity:.55}
+  .b-new{background:var(--celadon)}
+  .bar-val{font-family:var(--f-mono);font-variant-numeric:tabular-nums;text-align:right;color:var(--muted);font-size:.8rem}
+  .legend{display:flex;gap:1.2rem;margin-top:.9rem;font-size:.78rem;color:var(--muted);flex-wrap:wrap}
+  .chip{display:inline-flex;align-items:center;gap:.35rem}
+  .swatch{width:11px;height:11px;border-radius:3px;display:inline-block}
+
+  .tscroll{overflow-x:auto;border:1px solid var(--rule);border-radius:6px;margin:1.4rem 0}
+  table{border-collapse:collapse;width:100%;background:var(--card);font-size:.9rem;min-width:29rem}
+  th,td{text-align:left;padding:.7rem .9rem;border-bottom:1px solid var(--rule);vertical-align:top}
+  tbody tr:last-child td{border-bottom:none}
+  th{background:var(--sunk);font-family:var(--f-mono);font-size:.68rem;letter-spacing:.1em;
+     text-transform:uppercase;color:var(--muted);font-weight:400}
+  td{color:var(--ink-soft)}
+  td.mono{font-family:var(--f-mono);font-size:.8rem;font-variant-numeric:tabular-nums;white-space:nowrap}
+  td.ok{color:var(--celadon)} td.no{color:var(--seal)}
+
+  .quiz{background:var(--card);border:1px solid var(--rule);border-radius:6px;padding:1.4rem 1.5rem;margin:1.4rem 0}
+  .q-head{display:flex;gap:.7rem;align-items:baseline}
+  .q-num{font-family:var(--f-mono);font-size:.72rem;color:var(--celadon);white-space:nowrap}
+  .q-text{font-weight:700;color:var(--ink)}
+  .opts{list-style:none;padding:0;margin:1rem 0 0;display:flex;flex-direction:column;gap:.5rem}
+  .opt{display:block;width:100%;text-align:left;cursor:pointer;background:var(--sunk);
+       border:1px solid var(--rule);border-radius:5px;padding:.7rem .9rem;font-family:inherit;
+       font-size:.92rem;line-height:1.6;color:var(--ink-soft);transition:border-color .15s,background .15s}
+  .opt:hover:not(:disabled){border-color:var(--celadon-dim)}
+  .opt:disabled{cursor:default}
+  .opt.correct{background:var(--wash);border-color:var(--celadon);color:var(--ink)}
+  .opt.wrong{background:var(--seal-wash);border-color:var(--seal);color:var(--ink)}
+  .opt .mark{font-family:var(--f-mono);font-weight:700;margin-right:.5rem}
+  .fb{margin-top:.9rem;padding:.85rem 1rem;border-radius:5px;font-size:.9rem;line-height:1.75;display:none}
+  .fb.show{display:block}
+  .fb.ok{background:var(--wash);border-left:3px solid var(--celadon)}
+  .fb.no{background:var(--seal-wash);border-left:3px solid var(--seal)}
+  .fb b{color:var(--ink)}
+  .score{margin-top:1.6rem;padding:1.1rem 1.3rem;border-radius:6px;background:var(--sunk);
+         border:1px solid var(--rule);font-family:var(--f-mono);font-size:.9rem;color:var(--ink-soft)}
+
+  footer{margin-top:5rem;padding-top:1.4rem;border-top:1px solid var(--rule);
+         font-family:var(--f-mono);font-size:.73rem;color:var(--muted);line-height:1.9}
+  :focus-visible{outline:2px solid var(--celadon);outline-offset:2px}
+  @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+  @media (max-width:34rem){
+    .bar-row{grid-template-columns:6rem 1fr 2.8rem;font-size:.8rem}
+    .step{grid-template-columns:1.4rem 1fr;gap:.5rem}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="top">
+  <span class="kicker">나의 사관일지 · 작업 기록</span>
+  <h1>일지에 무엇을 담을 것인가</h1>
+  <p class="sub">
+    평가 지표를 먼저 만들고 기준을 나중에 정하는 실수를 했다. 순서를 되돌리는 과정에서,
+    요약을 평가한다는 것이 무엇인지와 사람의 눈이 왜 채점자로 부적합한지가 드러난다.
+  </p>
+  <div class="facts">
+    <span>2026-08-03</span>
+    <span>신규 819줄 · 스크립트 3개</span>
+    <span>대상 55일 · 272청크</span>
+    <span>모델 Haiku 4.5 / Sonnet 5 / Opus 5</span>
+  </div>
+</header>
+
+<nav class="toc">
+  <h2>목차</h2>
+  <ol>
+    <li><a href="#bg">배경</a>
+      <ol>
+        <li><a href="#bg-deep">깊은 배경 — 이 시스템은 무엇을 하는가</a></li>
+        <li><a href="#bg-narrow">좁은 배경 — 일지 층이 서 있는 자리</a></li>
+      </ol>
+    </li>
+    <li><a href="#intuition">직관</a>
+      <ol>
+        <li><a href="#i1">요약을 "많이 담았는가"로 재면 안 된다</a></li>
+        <li><a href="#i2">기준은 목적에서 나온다</a></li>
+        <li><a href="#i3">사람의 눈은 채점자로 부적합하다</a></li>
+        <li><a href="#i4">일지는 검색이 실패하는 자료로 가는 다리</a></li>
+      </ol>
+    </li>
+    <li><a href="#code">코드</a>
+      <ol>
+        <li><a href="#c1">재료를 만든다</a></li>
+        <li><a href="#c2">기준을 프롬프트에 넣는다</a></li>
+        <li><a href="#c3">원자료를 채점 기준으로 삼는다</a></li>
+        <li><a href="#c4">LangSmith에 붙인다</a></li>
+      </ol>
+    </li>
+    <li><a href="#result">결과</a>
+      <ol>
+        <li><a href="#r1">기준을 바꾼 효과</a></li>
+        <li><a href="#r2">세 모델 비교</a></li>
+        <li><a href="#r3">지표가 못 본 것</a></li>
+      </ol>
+    </li>
+    <li><a href="#quiz">퀴즈</a></li>
+  </ol>
+</nav>
+
+<!-- ============ 배경 ============ -->
+<section id="bg">
+  <span class="sec-num">01</span>
+  <h2>배경</h2>
+
+  <h3 id="bg-deep">깊은 배경 — 이 시스템은 무엇을 하는가</h3>
+
+  <div class="callout note">
+    <span class="label">건너뛰어도 좋다</span>
+    <p>벡터 검색과 RAG에 익숙하다면 <a href="#bg-narrow">좁은 배경</a>으로 바로 넘어가도 된다.</p>
+  </div>
+
+  <p>
+    <strong>나의 사관일지</strong>는 사용자가 남긴 흔적 — 학습 문서, git 커밋, AI 대화 — 을
+    날짜와 함께 모아 두었다가 세 가지 질문에 답하는 프로그램이다.
+    <em>내일 뭘 해야 하나</em>, <em>지금까지 뭘 했나</em>, <em>전에 그게 뭐였나</em>.
+    조선시대 사관이 매일의 일을 기록했듯이.
+  </p>
+
+  <p>
+    자료는 <strong>임베딩</strong>되어 벡터 데이터베이스에 저장된다. 임베딩은 글을 숫자 벡터로
+    바꾸는 일이고, 뜻이 비슷한 글은 벡터 공간에서 가까이 놓인다. 그래서 "비슷한 내용 찾기"가
+    "가까운 점 찾기"가 된다. 각 벡터에는 메타데이터가 붙는데, 이 프로젝트에서 가장 중요한 것이
+    <code>date</code>다. 날짜로 걸러야 그날의 일지를 쓸 수 있기 때문이다.
+  </p>
+
+  <h3 id="bg-narrow">좁은 배경 — 일지 층이 서 있는 자리</h3>
+
+  <p>
+    원문을 그대로 두고 검색만 하면 문제가 생긴다. 사용자가 "지난주에 뭐 했지?"라고 물으면
+    관련 조각 몇 개가 나올 뿐, 그 주에 무슨 일이 있었는지는 알 수 없다. 그래서 원문 위에
+    <strong>일지</strong>라는 요약 층을 둔다.
+  </p>
+
+  <figure>
+    <div class="diagram">
+      <div class="layers">
+        <div class="layer">
+          <div class="layer-name">원문</div>
+          <div class="layer-body">날짜별 · 있는 그대로 (LaTeX 수식, 커밋 이력, 대화 로그)</div>
+        </div>
+        <div class="down">↓</div>
+        <div class="layer accent">
+          <div class="layer-name">일지 &nbsp;← 이번 작업의 대상</div>
+          <div class="layer-body">날짜별 · 그날의 서사</div>
+        </div>
+        <div class="down">↓</div>
+        <div class="layer ghost">
+          <div class="layer-name">개념 노트 / 위키</div>
+          <div class="layer-body">개념별 · 날짜 무관 — 아직 만들지 않음</div>
+        </div>
+      </div>
+    </div>
+    <figcaption>세 층 구조. 이번 작업은 가운데 층만 다룬다.</figcaption>
+  </figure>
+
+  <p>
+    이번 작업 직전의 상태는 이랬다. 일지를 생성하는 코드가 있고, 프롬프트에
+    <code>## 배운 것 — 핵심 개념을 항목별로</code> 라고 적혀 있었다. 그리고 일지가
+    잘 쓰였는지 재는 평가 코드가 있었다.
+  </p>
+
+  <div class="callout warn">
+    <span class="label">문제</span>
+    <p>
+      <strong>"핵심"이 무엇인지는 어디에도 정의되어 있지 않았다.</strong> 그런데도 평가는
+      이미 존재했다. 무엇이 정답인지 정하지 않은 채 채점표부터 만든 셈이다.
+    </p>
+  </div>
+</section>
+
+<!-- ============ 직관 ============ -->
+<section id="intuition">
+  <span class="sec-num">02</span>
+  <h2>직관</h2>
+
+  <h3 id="i1">요약을 "많이 담았는가"로 재면 안 된다</h3>
+
+  <p>
+    처음 만든 평가는 이렇게 동작했다. 사람이 쓴 기준 일지를 정답으로 두고, 모델이 쓴 일지와
+    <strong>용어가 얼마나 겹치는지</strong>를 커버리지로 계산한다. 많이 겹칠수록 좋은 점수.
+  </p>
+
+  <p>
+    작은 예로 보면 문제가 바로 드러난다. 어떤 날의 원자료에 이런 것들이 있다고 하자.
+  </p>
+
+  <div class="tscroll">
+    <table>
+      <thead><tr><th>원자료 항목</th><th>성격</th><th>요약에 필요한가</th></tr></thead>
+      <tbody>
+        <tr><td>어텐션 수식을 손으로 계산함</td><td>직접 한 일</td><td class="ok">필요</td></tr>
+        <tr><td>"??? 헛점, 전개가 매끄럽지 않다"</td><td>막힌 지점</td><td class="ok">필요</td></tr>
+        <tr><td>비디오 메모리 16GB → 32GB, 48GB, 64GB</td><td>맥락 없는 숫자</td><td class="no">불필요</td></tr>
+        <tr><td>ngrok 링크</td><td>참조</td><td class="no">불필요</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    좋은 요약은 아래 둘을 <strong>버려야</strong> 한다. 그런데 용어 겹침으로 재면
+    버릴수록 점수가 떨어진다. <strong>지표가 요약과 정반대 방향을 가리킨다.</strong>
+  </p>
+
+  <div class="callout">
+    <span class="label">핵심</span>
+    <p>
+      요약의 품질은 <em>담은 양</em>이 아니라 <em>고른 안목</em>이다. 무엇을 버렸는지를
+      벌하는 지표는 요약을 요약이 아니게 만든다.
+    </p>
+  </div>
+
+  <p>
+    실제로 이 지표는 두 방향으로 동시에 왜곡되어 있었다. 한 날짜를 뜯어 보면 이렇다.
+  </p>
+
+  <div class="tscroll">
+    <table>
+      <thead><tr><th>지표</th><th>표시값</th><th>왜곡</th><th>이유</th></tr></thead>
+      <tbody>
+        <tr><td>커버리지</td><td class="mono">22.3%</td><td class="no">실제보다 낮음</td>
+            <td>기준 일지 용어 188개 중 48개가 <strong>내 문체</strong>였다. "살펴봤다", "이어졌다" 같은 말이 분모에 들어가 있었다</td></tr>
+        <tr><td>근거성</td><td class="mono">76.8%</td><td class="no">실제보다 높음</td>
+            <td>"지어낸 용어" 23개 중 20개가 "개념", "기반", "주요" 같은 <strong>일반 명사</strong>였다. 진짜 환각은 3개뿐</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3 id="i2">기준은 목적에서 나온다</h3>
+
+  <p>
+    기준을 임의로 정할 수는 없다. 이 시스템이 답해야 할 세 질문에서 끌어내면 담을 것이
+    그대로 도출된다.
+  </p>
+
+  <div class="tscroll">
+    <table>
+      <thead><tr><th>담는 것</th><th>어느 질문에 답하나</th><th>판별법</th></tr></thead>
+      <tbody>
+        <tr><td><strong>한 일</strong></td><td>지금까지 뭘 했나</td><td>직접 만들고·계산하고·커밋한 것. 읽기만 한 것과 구분</td></tr>
+        <tr><td><strong>막힌 것</strong></td><td>내일 뭘 해야 하나</td><td><code>???</code>, "헛점", "매끄럽지 않다", 의문형 메모</td></tr>
+        <tr><td><strong>정한 것</strong></td><td>지금까지 뭘 했나</td><td>결정·구상·방향</td></tr>
+        <tr><td><strong>예정</strong></td><td>내일 뭘 해야 하나</td><td>일정, 마감, "다음 시간 예고"</td></tr>
+        <tr><td><strong>다룬 주제</strong></td><td>전에 그게 뭐였나</td><td>개념 이름만. 설명은 하지 않음</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="callout">
+    <span class="label">대전제</span>
+    <p>
+      <strong>일지는 원문을 대체하지 않는다.</strong> 미적분학의 기본 정리를 일지에 옮겨 적을
+      이유가 없다. 원문이 벡터DB에 그대로 있기 때문이다. 개념 설명을 빼면 일지는 짧아지고,
+      그 자리에 한 일·막힌 것·예정이 들어간다.
+    </p>
+  </div>
+
+  <h3 id="i3">사람의 눈은 채점자로 부적합하다</h3>
+
+  <p>
+    작업 도중 같은 실수를 두 번 했다. 모델이 쓴 일지를 읽고 "이건 원자료에 없는 내용이다,
+    환각이다"라고 판정했는데, 두 번 다 틀렸다.
+  </p>
+
+  <div class="tscroll">
+    <table>
+      <thead><tr><th></th><th>내가 읽은 양</th><th>실제 원자료</th><th>결과</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">2026-06-15</td><td class="mono">700자</td><td class="mono">4,105자</td>
+            <td>환각이라 지목한 <code>neo4j</code>, <code>jena</code>, <code>hnsw</code>, <code>chroma</code>, <code>원핫</code>, <code>crud</code> — <strong>전부 원자료에 있었다</strong></td></tr>
+        <tr><td class="mono">2026-07-27</td><td class="mono">600자</td><td class="mono">4,475자</td>
+            <td>환각이라 지목한 <code>Next.js</code>, <code>LangGraph</code>, <code>FBL</code>, <code>prefill/decode</code> — <strong>전부 원자료에 있었다</strong></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    원인은 단순하다. 원자료를 화면에 띄울 때 앞부분만 잘라서 봤다. 4,000자짜리 자료에서
+    600자만 읽고 "없다"고 단정한 것이다. <strong>사람은 긴 자료를 끝까지 읽지 않는다.</strong>
+  </p>
+
+  <div class="callout warn">
+    <span class="label">그래서</span>
+    <p>
+      자동 평가가 필요한 이유는 "빠르니까"가 아니라 <strong>"사람보다 정확하니까"</strong>다.
+      코드는 4,475자를 전부 확인한다. 지치지도, 앞부분만 보고 넘어가지도 않는다.
+    </p>
+  </div>
+
+  <h3 id="i4">일지는 검색이 실패하는 자료로 가는 다리</h3>
+
+  <p>
+    일지에 개념 이름을 남길지 말지를 정하려면, 원문 검색이 실제로 잘 되는지부터
+    확인해야 했다. 실측하니 절반만 동작했다.
+  </p>
+
+  <div class="tscroll">
+    <table>
+      <thead><tr><th>검색어</th><th>1위 결과</th><th>판정</th></tr></thead>
+      <tbody>
+        <tr><td>야코비 행렬</td><td class="mono">2026-06-13 원문 — 정확히 일치</td><td class="ok">성공</td></tr>
+        <tr><td>동치관계 조건</td><td class="mono">2026-05-23 AI 대화 — 한국어 문장</td><td class="ok">성공</td></tr>
+        <tr><td>코시 수열</td><td class="mono">2026-06-05 CNN 역전파 수식</td><td class="no">실패</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    <code>코시 수열</code>은 실제로 <code>2026-06-13</code> 원문에 있는데 검색이 찾지 못했다.
+    그 청크가 이렇게 생겼기 때문이다.
+  </p>
+
+<pre><code>```math
+\begin{gather*}
+\lim _{ n \to \infty } a _{ n } = \sqrt{ 2 }
+\end{gather*}
+```</code></pre>
+
+  <p>
+    <strong>LaTeX 덩어리는 임베딩 품질이 나쁘다.</strong> 한국어 문장이 거의 없으니
+    "코시 수열"이라는 질의와 벡터 거리가 멀다. 대신 다른 날의 수식 덩어리끼리 서로 가까워서
+    엉뚱한 것이 1위가 된다.
+  </p>
+
+  <p>
+    일지는 깨끗한 한국어로 쓰인다. 그래서 일지가 이 구멍을 메운다.
+  </p>
+
+  <figure>
+    <div class="diagram">
+      <div class="flow">
+        <div class="step">
+          <span class="step-n">1</span>
+          <div>
+            <div class="step-t">일지를 검색한다</div>
+            <div class="step-d">"코시 수열" → 벡터 검색 → 2026-06-13 일지</div>
+          </div>
+        </div>
+        <div class="down">↓</div>
+        <div class="step exact">
+          <span class="step-n">2</span>
+          <div>
+            <div class="step-t">날짜를 확보한다 — 여기서 퍼지 검색이 끝난다</div>
+            <div class="step-d">date = 2026-06-13</div>
+          </div>
+        </div>
+        <div class="down">↓</div>
+        <div class="step exact">
+          <span class="step-n">3</span>
+          <div>
+            <div class="step-t">date 필터로 그날 원문을 통째로 가져온다</div>
+            <div class="step-d">20청크 — 검색이 아니라 정확한 조회. LaTeX 수식까지 빠짐없이</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <figcaption>
+      퍼지 검색은 <strong>1단계에서 한 번만</strong> 쓴다. 날짜를 얻은 뒤로는 정확한 키로
+      넘어가므로, 임베딩 품질이 나쁜 자료도 확실히 도달한다.
+    </figcaption>
+  </figure>
+
+  <p>
+    다만 일지가 검색에 걸려야 이 다리가 작동한다. 그래서 개념 이름을 어떻게 적을지도
+    실측했다. 같은 날짜의 일지를 두 형태로 만들어 유사도를 쟀다.
+  </p>
+
+  <div class="tscroll">
+    <table>
+      <thead><tr><th>질의</th><th>이름만 나열</th><th>이름 + 한 줄</th><th></th></tr></thead>
+      <tbody>
+        <tr><td>코시 수열</td><td class="mono">0.3888</td><td class="mono ok">0.5231</td><td>+34%</td></tr>
+        <tr><td>코시 수열이 뭐였지</td><td class="mono">0.3527</td><td class="mono ok">0.4814</td><td>+36%</td></tr>
+        <tr><td>야코비 행렬</td><td class="mono ok">0.2445</td><td class="mono">0.2327</td><td>−5%</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    이름만 18개를 나열하면 벡터가 그 18개의 <strong>평균 위치</strong>로 가는데, 평균은
+    어느 개념과도 멀다. 한 줄 설명이 붙으면 벡터가 그 개념 쪽으로 당겨진다.
+  </p>
+
+  <div class="callout note">
+    <span class="label">그런데도 이름만 쓰기로 했다</span>
+    <p>
+      마지막 행이 이유다. 목록이 길어질수록 각 항목의 신호가 희석되므로, 한 줄을 붙여도
+      한계가 있다. 개념 검색을 일지가 책임지게 만들려면 <strong>개념별로 노트를 따로 두는
+      층</strong>이 필요한데, 후보 용어를 세어 보니 55일치에서 <strong>6,479개</strong>가
+      나왔다. 빈도 1위는 <code>피드백</code>(52일)으로 개념조차 아니었다. 자동 추출이
+      불가능하다는 뜻이므로, 그 층은 뒤로 미뤘다.
+    </p>
+  </div>
+</section>
+
+<!-- ============ 코드 ============ -->
+<section id="code">
+  <span class="sec-num">03</span>
+  <h2>코드</h2>
+
+  <p>파일 순서가 아니라 데이터가 흐르는 순서로 본다. 재료를 만들고 → 기준을 넣고 → 채점한다.</p>
+
+  <h3 id="c1">1. 재료를 만든다</h3>
+
+  <p>
+    실제 데이터에는 문서만 있는 날이 대부분이었다. 일지 생성을 시험하려면 하루에
+    문서·커밋·대화가 함께 있어야 하므로, 각 날짜의 <strong>실제 TIL 내용을 근거로</strong>
+    그날 있었을 법한 커밋과 대화를 생성했다.
+  </p>
+
+  <div class="callout warn">
+    <span class="label">반드시 표시한다</span>
+    <p>
+      이 시스템은 "실제로 무엇을 했는가"의 기록이다. 지어낸 커밋이 진짜와 구분되지 않으면
+      나중에 "6월 13일에 뭐 했지?"에 소설이 나온다. 그래서 모든 더미에
+      <code>synthetic=True</code>를 박았다. 나중에 골라내거나 일괄 삭제할 수 있다.
+    </p>
+  </div>
+
+<pre><code><span class="cm"># scripts/seed_dummy_sources.py</span>
+metadata={
+    <span class="cm"># 실제 커밋 SHA가 아니므로 합성임이 드러나는 형태로 만든다</span>
+    <span class="add">"commit_sha": f"synthetic-{day['date']}-{index}",</span>
+    "date": day["date"],
+    <span class="add">"date_origin": "synthetic",</span>
+    <span class="add">"synthetic": True,</span>
+}</code></pre>
+
+  <p>결과는 55일 전부가 세 종류를 갖추게 되었다.</p>
+
+  <div class="tscroll">
+    <table>
+      <thead><tr><th>소스 타입</th><th>청크</th><th>비고</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">git</td><td class="mono">126</td><td>실제 TIL 문서</td></tr>
+        <tr><td class="mono">git_log</td><td class="mono">91</td><td>합성</td></tr>
+        <tr><td class="mono">agent_chatlog</td><td class="mono">55</td><td>합성</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3 id="c2">2. 기준을 프롬프트에 넣는다</h3>
+
+  <p>이전 프롬프트에서 담을 것을 정하는 문장은 사실상 한 줄뿐이었다.</p>
+
+<pre><code><span class="del">## 배운 것 — 핵심 개념을 항목별로. 자료에 나온 용어를 사용</span>
+<span class="cm"># "핵심"이 무엇인지 정의되어 있지 않다</span></code></pre>
+
+  <p>새 프롬프트는 담을 것과 버릴 것을 모두 명시한다.</p>
+
+<pre><code><span class="cm"># scripts/generate_journals.py — SYSTEM</span>
+<span class="add">일지는 원문을 대체하지 않는다. 개념 설명은 원문에 그대로 남아 있으므로
+옮겨 적지 않는다.
+
+## 담는 것
+1. 한 일 — 직접 만들고, 계산하고, 커밋한 것. 읽기만 한 것과 구분한다.
+2. 막힌 것 — `???`, "헛점", "매끄럽지 않다" 같은 표시, 의문형 메모.
+3. 정한 것 — 결정, 구상, 방향.
+4. 예정 — 일정, 마감, "다음 시간 예고" 같은 메모.
+5. 다룬 주제 — 개념 이름만 나열한다. 설명하지 않는다.
+
+## 버리는 것
+- 자료에 없는 내용. 이건 선택이 아니라 금지다.
+- 개념의 상세 설명. 이름만 남기고 내용은 원문에 맡긴다.
+- 문장이 끊겨 복원할 수 없는 조각.
+- 맥락 없는 숫자 나열, 참조 링크.
+
+개념 설명을 뺐으므로 자료가 많아도 대개 500자 안쪽이면 충분하다.</span></code></pre>
+
+  <h3 id="c3">3. 원자료를 채점 기준으로 삼는다</h3>
+
+  <p>
+    가장 중요한 변화다. 이전에는 <strong>사람이 쓴 기준 일지</strong>와 비교했고, 그래서
+    문체 차이가 점수로 둔갑했다. 새 평가는 <strong>원자료</strong>와 비교한다.
+  </p>
+
+<pre><code><span class="del">- def score(candidate, reference, source):
+-     ref = terms(reference)              # 사람이 쓴 일지의 용어
+-     covered = cand & ref
+-     coverage = len(covered) / len(ref)  # ← 문체가 분모에 섞인다</span>
+
+<span class="add">+ def score(candidate, source, chunks):
++     """
++     기준 일지와 비교하지 않는 이유: 일지는 요약이므로 정답이 하나가 아니다.
++     사람이 쓴 문장과 용어가 겹치는지를 재면 문체 차이가 점수로 둔갑한다.
++     대신 기준 문서가 "반드시 담으라"고 정한 것만 원자료에서 찾아 확인한다.
++     """</span></code></pre>
+
+  <p>지표는 넷이고, 각각 기준 문서의 항목에 대응한다.</p>
+
+<pre><code><span class="cm"># ① 커밋 반영 — 그날 커밋한 내용이 일지에 나타나는가</span>
+commits = find_commits(chunks)          <span class="cm"># git_log는 구조화돼 있어 자동 추출 가능</span>
+commit_hits = [m for m in commits if _hit(terms(m), low)]
+
+<span class="cm"># ② 막힌 것 반영 — 원자료의 의문·오류 표시가 일지에 나타나는가</span>
+<span class="add">_BLOCKER = re.compile(r"\?{2,}|헛점|허점|매끄럽지|모르겠|불명확|헷갈")</span>
+blockers = find_blockers(source)
+blocker_hits = [b for b in blockers if _hit(terms(b), low, threshold=0.3)]
+
+<span class="cm"># ③ 환각 — 일지의 영문 용어 중 원자료에 없는 것</span>
+cand_en = {t for t in terms(candidate) if t[0].isascii()}
+invented_en = sorted(t for t in cand_en if t not in source_flat)
+
+<span class="cm"># ④ 간결성 — 기준이 정한 500자 상한 대비</span></code></pre>
+
+  <div class="callout">
+    <span class="label">부수 효과</span>
+    <p>
+      정답 일지가 필요 없어졌다. 원자료만 있으면 채점되므로, 사람이 손으로 쓴 5일이 아니라
+      <strong>55일 전부</strong>를 평가할 수 있다.
+    </p>
+  </div>
+
+  <h3 id="c4">4. LangSmith에 붙인다</h3>
+
+  <p>
+    용어를 옮기면 이렇게 대응된다. 두 파일 묶음을 업로드해 맞대는 것이 아니라,
+    기준을 Dataset으로 올리고 모델마다 Experiment를 돌린다.
+  </p>
+
+  <div class="tscroll">
+    <table>
+      <thead><tr><th>개념</th><th>LangSmith</th><th>실체</th></tr></thead>
+      <tbody>
+        <tr><td>평가셋</td><td><strong>Dataset</strong></td><td>Example마다 <code>inputs</code>=날짜+원자료</td></tr>
+        <tr><td>테스트셋</td><td><strong>Experiment</strong></td><td>Dataset에 생성 함수를 돌린 결과</td></tr>
+        <tr><td>비교</td><td><strong>Evaluator</strong></td><td>원자료와 대조해 점수</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+<pre><code>uv run python -m scripts.langsmith_eval upload alex
+uv run python -m scripts.langsmith_eval run alex --model claude-haiku-4-5
+uv run python -m scripts.langsmith_eval run alex --model claude-sonnet-5
+uv run python -m scripts.langsmith_eval run alex --model claude-opus-5</code></pre>
+
+  <div class="callout note">
+    <span class="label">주의</span>
+    <p>
+      Sonnet 5와 Opus 5는 <strong>thinking이 기본으로 켜져</strong> 있고 <code>max_tokens</code>가
+      thinking과 응답을 합쳐서 제한한다. Haiku 기준으로 잡은 <code>4000</code>을 그대로 쓰면
+      일지가 중간에 잘리므로 <code>12000</code>으로 올렸다.
+    </p>
+  </div>
+</section>
+
+<!-- ============ 결과 ============ -->
+<section id="result">
+  <span class="sec-num">04</span>
+  <h2>결과</h2>
+
+  <div class="callout warn">
+    <span class="label">이 절은 한 번 뒤집혔다</span>
+    <p>
+      처음 측정에서는 「막힌 것 포착」이 90% → 96%로 <em>개선</em>된 것으로 나왔다.
+      그러나 그 수치는 정규식 분모로 잰 값이었고, 55일 중 43일(78%)에서 분모가 0이라
+      자동 만점이 나오고 있었다. 분모를 바로잡자 결론이 반대로 뒤집혔다.
+      아래는 <strong>고친 분모(300개)로 다시 잰 값</strong>이다.
+    </p>
+  </div>
+
+  <h3 id="r1">기준을 바꾼 효과</h3>
+
+  <p>같은 모델(Haiku 4.5), 같은 자료, 55일 전체. 프롬프트의 기준만 바꿨다.</p>
+
+  <div class="tscroll">
+    <table>
+      <thead><tr><th>버전</th><th>커밋 반영</th><th>막힌 것</th><th>환각 없음</th><th>길이</th></tr></thead>
+      <tbody>
+        <tr><td>v1 · 기준 없음</td><td class="mono">98.2%</td><td class="mono">61.9%</td>
+            <td class="mono">93.1%</td><td class="mono">804자</td></tr>
+        <tr><td>v2 · 기준 + 길이 제한</td><td class="mono ok">100.0%</td><td class="mono no">58.4%</td>
+            <td class="mono ok">96.5%</td><td class="mono">574자</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    기준을 명시하자 커밋 반영과 환각은 개선되었으나, <strong>「막힌 것」은 3.5%p 나빠졌다.</strong>
+    함께 넣은 <em>"500자 안쪽"</em> 지시가 담아야 할 것까지 깎아낸 것이다.
+  </p>
+
+  <h3 id="r2">세 모델 비교</h3>
+
+  <p>같은 자료, 같은 프롬프트, 55일. 분모는 고정된 풀 300개.</p>
+
+  <div class="tscroll">
+    <table>
+      <thead><tr><th>모델</th><th>커밋 반영</th><th>막힌 것</th><th>환각 없음</th><th>길이</th></tr></thead>
+      <tbody>
+        <tr><td>Haiku 4.5</td><td class="mono">97.3%</td><td class="mono">60.3%</td>
+            <td class="mono">97.3%</td><td class="mono">567자</td></tr>
+        <tr><td><strong>Sonnet 5</strong></td><td class="mono ok">99.1%</td><td class="mono">68.0%</td>
+            <td class="mono">96.6%</td><td class="mono">618자</td></tr>
+        <tr><td>Opus 5</td><td class="mono">97.3%</td><td class="mono ok">75.7%</td>
+            <td class="mono ok">97.4%</td><td class="mono">890자</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    정규식 분모로 쟀을 때 격차는 3.7%p였고 <em>"모델 차이가 없다"</em>는 결론을 냈다.
+    고친 분모로는 <strong>15.4%p</strong>다. 차이가 없었던 것이 아니라 자가 차이를 못 재고 있었다.
+  </p>
+
+  <h3 id="r3">지표가 못 본 것</h3>
+
+  <p>
+    Opus가 가장 높지만, 우위가 어디서 오는지를 나누면 판단이 달라진다. 3/3 합의 항목은
+    진짜일 가능성이 높고, 1/3 단독 항목은 오탐일 가능성이 높다.
+  </p>
+
+  <figure>
+    <div class="diagram">
+      <div class="bars">
+        <div class="bar-row"><span>3/3 확실 (57)</span>
+          <div class="bar-track"><div class="bar-fill b-old" style="width:70.2%"></div></div>
+          <span class="bar-val">70.2%</span></div>
+        <div class="bar-row"><span></span>
+          <div class="bar-track"><div class="bar-fill b-new" style="width:82.5%"></div></div>
+          <span class="bar-val">82.5%</span></div>
+
+        <div class="bar-row"><span>2/3 (68)</span>
+          <div class="bar-track"><div class="bar-fill b-old" style="width:66.2%"></div></div>
+          <span class="bar-val">66.2%</span></div>
+        <div class="bar-row"><span></span>
+          <div class="bar-track"><div class="bar-fill b-new" style="width:80.9%"></div></div>
+          <span class="bar-val">80.9%</span></div>
+
+        <div class="bar-row"><span>1/3 의심 (175)</span>
+          <div class="bar-track"><div class="bar-fill b-old" style="width:50.9%"></div></div>
+          <span class="bar-val">50.9%</span></div>
+        <div class="bar-row"><span></span>
+          <div class="bar-track"><div class="bar-fill b-new" style="width:70.3%"></div></div>
+          <span class="bar-val">70.3%</span></div>
+      </div>
+      <div class="legend">
+        <span class="chip"><span class="swatch b-old"></span> Haiku 4.5</span>
+        <span class="chip"><span class="swatch b-new"></span> Opus 5</span>
+      </div>
+    </div>
+    <figcaption>
+      Opus의 우위가 <strong>오탐 의심 구간에서 가장 크다</strong> (+19.4%p).
+      확실한 구간의 격차는 +12.3%p다.
+    </figcaption>
+  </figure>
+
+  <p>
+    Sonnet을 넣고 보면 위치가 분명해진다. 확실한 구간에서
+    <strong>Haiku 70.2% → Sonnet 80.7% → Opus 82.5%</strong>로 Sonnet이 Opus를 거의 따라잡는다(1.8%p 차).
+    의심 구간에서는 <strong>50.9% → 54.3% → 70.3%</strong>로 Opus만 크게 뛴다(16.0%p).
+    Sonnet은 확실한 것을 거의 다 잡으면서 의심스러운 것은 덜 집는다.
+  </p>
+
+  <div class="callout">
+    <span class="label">채택</span>
+    <p>
+      <strong>Sonnet 5.</strong> 길이 제한을 없앤 최종본은 커밋 반영 100%, 막힌 것 70.3%,
+      환각 없음 96.5%, 평균 681자다. 제한을 없앴는데 618자 → 681자로 63자만 늘었다 —
+      <strong>애초에 그 제한이 작동하지 않았다는 증거다.</strong>
+    </p>
+  </div>
+
+  <div class="callout note">
+    <span class="label">남은 오차</span>
+    <p>
+      병합 임계값 0.60이 긴 문장에서 실패해 <code>느린 코랩</code>과
+      <code>코랩이 느려서 한 페이지에 작성해야 했음</code>이 갈라졌고, 둘 다 잡은 Opus가
+      점수를 두 번 받았다. 또 단독 항목 175개(58%)에 오탐이 섞여 있다.
+    </p>
+  </div>
+</section>
+
+<!-- ============ 퀴즈 ============ -->
+<section id="quiz">
+  <span class="sec-num">05</span>
+  <h2>퀴즈</h2>
+  <p>선택지를 눌러 확인한다. 다섯 문제 모두 이번 작업의 실질적인 내용을 묻는다.</p>
+  <div id="quizzes"></div>
+  <div class="score" id="score">아직 푼 문제가 없다.</div>
+</section>
+
+<footer>
+  나의 사관일지 · 일지 생성 기준과 자동 평가 · 2026-08-03<br>
+  scripts/seed_dummy_sources.py · scripts/generate_journals.py · scripts/langsmith_eval.py
+</footer>
+
+</div>
+
+<script>
+const QUESTIONS = [
+  {
+    q: "기존 평가의 <code>커버리지</code> 지표가 요약 평가에 부적합했던 근본 이유는?",
+    opts: [
+      "한국어 형태소 분석이 부정확해 조사가 붙은 활용형을 다른 단어로 셌기 때문",
+      "정답으로 삼은 기준 일지가 5일치뿐이라 표본이 너무 적었기 때문",
+      "많이 담을수록 높은 점수를 주므로, 버릴 것을 잘 버리는 요약의 본질과 반대 방향을 가리켰기 때문",
+      "사람이 쓴 일지가 모델이 쓴 일지보다 항상 길어서 분모가 컸기 때문"
+    ],
+    a: 2,
+    fb: [
+      "형태소 문제도 실제로 있었고 어간 처리로 노이즈를 줄이긴 했지만, 그건 정확도 문제이지 지표의 방향이 틀렸다는 근본 문제와는 다르다.",
+      "표본이 적은 것도 한계였지만, 표본을 55일로 늘려도 '많이 담을수록 좋다'는 방향 자체는 그대로 남는다.",
+      "정확하다. 좋은 요약은 맥락 없는 숫자나 참조 링크를 버려야 하는데, 용어 겹침으로 재면 버릴수록 점수가 떨어진다. 지표가 요약을 요약이 아니게 만든다.",
+      "길이는 별도 지표(분량비)로 다뤘다. 커버리지의 문제는 길이가 아니라 '무엇을 세는가'에 있다."
+    ]
+  },
+  {
+    q: "새 평가가 <strong>사람이 쓴 기준 일지 대신 원자료</strong>와 비교하도록 바뀐 이유는?",
+    opts: [
+      "기준 일지를 만드는 데 시간이 오래 걸려서 자동화가 필요했기 때문",
+      "요약은 정답이 하나가 아니므로, 사람 문장과의 용어 겹침을 재면 문체 차이가 점수로 둔갑하기 때문",
+      "원자료가 기준 일지보다 길어서 통계적으로 안정적인 점수가 나오기 때문",
+      "LangSmith가 reference outputs 없는 Dataset만 지원하기 때문"
+    ],
+    a: 1,
+    fb: [
+      "작성 비용도 부담이었고 실제로 정답 일지가 필요 없어진 것은 좋은 부수 효과였지만, 그건 결과이지 이유가 아니다.",
+      "정확하다. 실측에서 '누락' 146개 중 48개가 \"살펴봤다\", \"이어졌다\" 같은 작성자의 문체였다. 모델이 잘못한 게 아닌데 감점되고 있었다.",
+      "길이는 관계없다. 문제는 비교 대상의 성격이지 분량이 아니다.",
+      "LangSmith는 reference outputs를 지원한다. 실제로 참고용으로 함께 싣고 있고, 채점에만 쓰지 않을 뿐이다."
+    ]
+  },
+  {
+    q: "\"코시 수열\"로 검색했을 때 원문이 아니라 엉뚱한 CNN 역전파 수식이 1위로 나온 이유는?",
+    opts: [
+      "해당 날짜의 원문에 '코시 수열'이라는 표현이 실제로 없었기 때문",
+      "그 청크가 LaTeX 수식 덩어리라 한국어 문장이 거의 없고, 그래서 질의와 벡터 거리가 멀었기 때문",
+      "date 메타데이터가 누락되어 날짜 필터가 동작하지 않았기 때문",
+      "청크 크기가 너무 커서 여러 개념이 한 벡터에 뭉개졌기 때문"
+    ],
+    a: 1,
+    fb: [
+      "원문에는 있었다. 있는데도 검색이 못 찾은 것이 바로 문제의 핵심이다.",
+      "정확하다. <code>\\begin{gather*}</code> 범벅인 청크는 임베딩 신호가 약해서, 다른 날의 수식 덩어리끼리 오히려 더 가까워진다. 일지 층이 이 구멍을 메운다.",
+      "date 메타데이터는 정상이었다. 이 검색은 애초에 날짜 필터가 아니라 유사도 검색 경로였다.",
+      "청크 크기도 영향을 줄 수 있지만, 여기서 관측된 실패의 직접 원인은 내용이 수식이라 한국어 신호가 없다는 점이다."
+    ]
+  },
+  {
+    q: "개념 이름을 <strong>이름만 나열</strong>했을 때 검색 신호가 약해진 현상의 원인은?",
+    opts: [
+      "이름만 있으면 문자열 길이가 짧아 임베딩 모델이 처리할 토큰이 부족해지기 때문",
+      "여러 개념 이름을 한 문서에 나열하면 벡터가 그것들의 평균 위치로 가는데, 평균은 어느 개념과도 멀기 때문",
+      "임베딩 모델이 한국어 고유명사를 학습하지 않아 이름 자체를 인식하지 못하기 때문",
+      "설명이 없으면 메타데이터에 키워드가 저장되지 않아 필터가 걸리지 않기 때문"
+    ],
+    a: 1,
+    fb: [
+      "길이 문제가 아니다. 이름 18개를 나열한 문서도 충분히 길다.",
+      "정확하다. 중심점 문제다. 실측에서 '코시 수열' 질의에 대해 이름만 나열은 0.3888, 한 줄 설명을 붙이면 0.5231로 34% 높았다.",
+      "고유명사 인식 문제였다면 한 줄 설명을 붙여도 개선되지 않았을 것이다. 실제로는 개선되었다.",
+      "메타데이터 저장과 벡터 유사도는 별개다. 여기서 잰 것은 벡터 유사도다."
+    ]
+  },
+  {
+    q: "개념별 노트 층(위키/온톨로지)을 이번에 만들지 않고 미룬 판단의 근거는?",
+    opts: [
+      "벡터DB를 별도 컬렉션으로 분리해야 해서 스키마 변경 비용이 컸기 때문",
+      "후보 용어가 55일치에서 6,479개나 나왔고 빈도 1위가 개념도 아닌 '피드백'이라, 자동 추출 방법이 없었기 때문",
+      "LangSmith가 개념 단위 평가를 지원하지 않기 때문",
+      "일지를 항목별로 쪼개면 청크 수가 550개로 늘어 저장 용량이 부족했기 때문"
+    ],
+    a: 1,
+    fb: [
+      "컬렉션 분리는 불필요하다는 결론이 났다. <code>source_type</code> 메타데이터로 구분하면 충분하고, 오히려 분리하면 층을 넘나드는 질의가 어려워진다.",
+      "정확하다. 빈도로도 안 되고(<code>피드백</code> 52일 1위, <code>https</code> 51일 2위) 용어 추출로도 안 된다(6,479개). 결국 LLM 판단이 필요한데, 그 전에 아래층인 일지 기준부터 확정하는 것이 순서다.",
+      "LangSmith의 지원 범위는 이 판단과 무관하다. 평가는 코드로 직접 작성했다.",
+      "550개는 저장 용량 문제가 될 규모가 아니다. 진짜 문제는 같은 개념이 날짜마다 흩어져 한곳에 모이지 않는다는 점이었다."
+    ]
+  }
+];
+
+const LETTERS = ['A','B','C','D'];
+const answered = new Array(QUESTIONS.length).fill(null);
+
+function render(){
+  const root = document.getElementById('quizzes');
+  QUESTIONS.forEach((item, qi) => {
+    const box = document.createElement('div');
+    box.className = 'quiz';
+
+    const head = document.createElement('div');
+    head.className = 'q-head';
+    const num = document.createElement('span');
+    num.className = 'q-num'; num.textContent = `Q${qi+1}`;
+    const text = document.createElement('span');
+    text.className = 'q-text'; text.innerHTML = item.q;
+    head.append(num, text);
+    box.appendChild(head);
+
+    const list = document.createElement('ul');
+    list.className = 'opts';
+    item.opts.forEach((optText, oi) => {
+      const li = document.createElement('li');
+      const btn = document.createElement('button');
+      btn.type = 'button'; btn.className = 'opt';
+      const mark = document.createElement('span');
+      mark.className = 'mark'; mark.textContent = LETTERS[oi] + '.';
+      btn.append(mark, document.createTextNode(optText));
+      btn.addEventListener('click', () => choose(qi, oi, box));
+      li.appendChild(btn); list.appendChild(li);
+    });
+    box.appendChild(list);
+
+    const fb = document.createElement('div');
+    fb.className = 'fb';
+    box.appendChild(fb);
+    root.appendChild(box);
+  });
+}
+
+function choose(qi, oi, box){
+  if (answered[qi] !== null) return;
+  const item = QUESTIONS[qi];
+  const correct = oi === item.a;
+  answered[qi] = correct;
+
+  box.querySelectorAll('.opt').forEach((b, i) => {
+    b.disabled = true;
+    if (i === item.a) b.classList.add('correct');
+    else if (i === oi) b.classList.add('wrong');
+  });
+
+  const fb = box.querySelector('.fb');
+  fb.className = 'fb show ' + (correct ? 'ok' : 'no');
+  fb.innerHTML = (correct ? '<b>정답이다.</b> ' : `<b>아니다. 정답은 ${LETTERS[item.a]}.</b> `)
+               + item.fb[oi]
+               + (correct ? '' : `<br><br><b>${LETTERS[item.a]}에 대하여:</b> ${item.fb[item.a]}`);
+  updateScore();
+}
+
+function updateScore(){
+  const done = answered.filter(a => a !== null).length;
+  const ok = answered.filter(a => a === true).length;
+  const el = document.getElementById('score');
+  if (done === 0){ el.textContent = '아직 푼 문제가 없다.'; return; }
+  let line = `${done} / ${QUESTIONS.length} 문제 풀이 · 정답 ${ok}개`;
+  if (done === QUESTIONS.length){
+    if (ok === QUESTIONS.length) line += ' — 전부 맞혔다.';
+    else if (ok >= 3) line += ' — 핵심은 잡았다. 틀린 문항의 해설을 다시 읽어 보자.';
+    else line += ' — 「직관」 절을 한 번 더 읽어 보길 권한다.';
+  }
+  el.textContent = line;
+}
+
+render();
+</script>
+</body>
+</html>

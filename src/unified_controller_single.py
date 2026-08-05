@@ -5,6 +5,17 @@
 Agent는 작업을 자동으로 연쇄 호출하고 (예: add_source_to_db → embed_source),
 InMemorySaver checkpointer를 통해 사용자별 대화 기록을 유지합니다.
 
+토큰 비용에 대하여:
+    LLM API는 무상태라 매 요청에 대화 기록 전체를 다시 싣는다. 그래서 이 모듈은
+    두 가지로 재전송량을 줄인다.
+
+    1) 턴이 끝나면 도구 호출·결과를 기록에서 걷어낸다 (prune_tool_traffic).
+       조회 결과 한 건이 1만 토큰을 넘는데 일지를 쓰고 나면 쓸 일이 없다.
+    2) 도구 스키마와 시스템 프롬프트를 프롬프트 캐시에 올린다 (create_system_message).
+       매 요청 반복되는 3,184 토큰이 정가의 10%로 청구된다.
+
+    적중 여부는 매 호출 로그의 'Tokens:' 줄에서 확인할 수 있다.
+
 공개 API:
     unified_agent(user_id: str, message: str) -> str
 
@@ -18,11 +29,18 @@ InMemorySaver checkpointer를 통해 사용자별 대화 기록을 유지합니�
     - retriever_vectordb
     - maker_logfile
 """
-from langchain_core.messages import SystemMessage, HumanMessage, AnyMessage
+from langchain_core.messages import (
+    AIMessage,
+    AnyMessage,
+    HumanMessage,
+    RemoveMessage,
+    SystemMessage,
+    ToolMessage,
+)
 from langgraph.graph import StateGraph, START, END, add_messages
 from langgraph.prebuilt import ToolNode, tools_condition
 from langgraph.checkpoint.memory import InMemorySaver
-from . import llm_router
+from .llm_router import codex_llm as llm #codex_llm , anthropic_llm
 from .tools import source as source_tools
 from .tools import embedding as embedding_tools
 from .tools import log as log_tools
@@ -76,16 +94,32 @@ unified_tools = [
     embedding_tools.embed_source,
     embedding_tools.get_embedding_status,
     log_tools.retriever_vectordb,
-    log_tools.maker_logfile
+    log_tools.maker_logfile,
+    log_tools.generate_daily_journals,
 ]
 
 # 단일 Agent용 Anthropic Claude (안정적이고 도구 호출 지원)
-llm_with_tools = llm_router.anthropic_llm.bind_tools(unified_tools)
+llm_with_tools = llm.bind_tools(unified_tools)
 
 
 def create_system_message(user_id: str) -> SystemMessage:
-    """user_id 컨텍스트가 포함된 시스템 메시지 생성"""
-    return SystemMessage(content=f"""당신은 소스 관리 및 일지 작성 어시스턴트입니다 (user_id: {user_id}).
+    """
+    user_id 컨텍스트가 포함된 시스템 메시지 생성.
+
+    content 를 문자열이 아니라 블록 목록으로 두고 cache_control 을 붙인다.
+    Anthropic 프롬프트 캐싱은 접두사 일치(prefix match)이고 렌더 순서가
+    tools → system → messages 이므로, 시스템 블록에 표시를 하나 두면
+    그 앞의 도구 스키마까지 함께 캐시된다 (실측 3,184 토큰).
+    두 번째 요청부터 이 구간은 정가의 10% 로 청구된다.
+
+    캐시가 살아 있으려면 이 문자열이 요청마다 바이트 단위로 같아야 한다.
+    시각·난수 같은 매번 바뀌는 값을 여기에 넣으면 캐시가 통째로 깨진다.
+    user_id 보간은 사용자별로 캐시가 갈릴 뿐이라 무해하다.
+    """
+    return SystemMessage(content=[{
+        "type": "text",
+        "cache_control": {"type": "ephemeral"},
+        "text": f"""당신은 소스 관리 및 일지 작성 어시스턴트입니다 (user_id: {user_id}).
 
 주요 기능:
 1. Source 관리
@@ -101,6 +135,7 @@ def create_system_message(user_id: str) -> SystemMessage:
 3. 일지 관리
    - 날짜/기간 기반 데이터 검색 (retriever_vectordb)
    - 일지 파일 저장 및 검색 등록 (maker_logfile)
+   - 기간 일지 일괄 생성 (generate_daily_journals) — 백그라운드로 실행됩니다
 
 워크플로우:
 - Git URL 추가 시: add_source_to_db를 먼저 호출하여 source_id를 얻은 후, 즉시 embed_source를 호출하여 자동으로 임베딩을 시작하세요.
@@ -125,7 +160,8 @@ def create_system_message(user_id: str) -> SystemMessage:
 - 중단된 작업이라고 안내되면 embed_source를 다시 호출해 재시작할 수 있습니다.
 
 중요: Git URL이 포함된 추가 요청은 반드시 add_source_to_db → embed_source 순서로 연쇄 호출하세요.
-""")
+""",
+    }])
 
 
 def create_unified_agent(user_id: str):
@@ -142,10 +178,68 @@ def create_unified_agent(user_id: str):
         print(f"[UNIFIED AGENT] Response:")
         print(f"  - Content: {result.content[:100] if result.content else 'None'}...")
         print(f"  - Tool calls: {result.tool_calls if hasattr(result, 'tool_calls') else 'None'}")
+        print(f"  - Tokens: {describe_usage(result)}")
 
         return {"messages": [result]}
 
     return unified_agent_node
+
+
+def describe_usage(result) -> str:
+    """
+    이번 호출의 토큰 내역을 한 줄로 만든다.
+
+    캐시 적중 여부는 여기서만 드러난다. 캐싱을 붙여 놓고 read 가 계속 0 이면
+    프리픽스를 깨는 값이 어딘가에 들어갔다는 뜻이므로 반드시 눈에 보여야 한다.
+    """
+    usage = getattr(result, "usage_metadata", None) or {}
+    if not usage:
+        return "정보 없음"
+
+    detail = usage.get("input_token_details") or {}
+    read, write = detail.get("cache_read", 0), detail.get("cache_creation", 0)
+
+    parts = [f"입력 {usage.get('input_tokens', 0):,}", f"출력 {usage.get('output_tokens', 0):,}"]
+    if write:
+        parts.append(f"캐시기록 {write:,}")
+    parts.append(f"캐시적중 {read:,}" if read else "캐시적중 없음")
+    return " · ".join(parts)
+
+
+def prune_tool_traffic(state: SingleAgentState) -> dict:
+    """
+    턴이 끝나면 도구 호출과 그 결과를 대화 기록에서 걷어낸다.
+
+    왜 필요한가:
+        LLM API 는 무상태라 매 요청에 대화 기록 전체를 다시 싣는다. 그런데
+        retriever_vectordb 의 결과는 하루치가 1만 토큰을 넘기고, 일지를 쓰고
+        나면 다시 쓸 일이 없는데도 기록에 남아 이후 모든 호출에 따라다녔다.
+
+        실측(일지 5건, 같은 thread_id): 275,265 토큰 중 81% 가 재전송이었고,
+        5번째 요청 하나가 첫 요청의 7.7배였다.
+
+    무엇을 남기는가:
+        사람의 말과 에이전트의 최종 답변은 그대로 둔다. 버리는 것은 도구를
+        부른 기록과 도구가 돌려준 원문뿐이다. 답변에 이미 요약돼 있으므로
+        "그중 두 번째 거 지워줘" 같은 후속 대화는 계속 통한다.
+
+    왜 짝으로 지우는가:
+        tool_use 블록만 남고 tool_result 가 사라지면 (혹은 그 반대) Anthropic
+        API 가 400 으로 거절한다. 반드시 양쪽을 함께 걷어내야 한다.
+    """
+    doomed = [
+        message.id
+        for message in state["messages"]
+        if message.id and (
+            isinstance(message, ToolMessage)
+            or (isinstance(message, AIMessage) and message.tool_calls)
+        )
+    ]
+
+    if doomed:
+        print(f"[UNIFIED AGENT] 도구 기록 {len(doomed)}건을 대화에서 제외했습니다.")
+
+    return {"messages": [RemoveMessage(id=message_id) for message_id in doomed]}
 
 
 def _build_graph(user_id: str):
@@ -159,18 +253,22 @@ def _build_graph(user_id: str):
     # 노드 추가
     builder.add_node("agent", unified_agent_node)
     builder.add_node("tools", tool_node)
+    builder.add_node("prune", prune_tool_traffic)
 
-    # 엣지 추가 
+    # 엣지 추가.
+    # 도구를 더 부르지 않으면 곧바로 끝내지 않고 prune 을 거친다 —
+    # 이번 턴에 쌓인 도구 호출·결과를 저장 전에 걷어내기 위해서다.
     builder.add_edge(START, "agent")
     builder.add_conditional_edges(
         "agent",
         tools_condition,
         {
             "tools": "tools",
-            "__end__": END,
+            "__end__": "prune",
         },
     )
     builder.add_edge("tools", "agent")
+    builder.add_edge("prune", END)
 
     # Checkpointer와 함께 컴파일
     return builder.compile(checkpointer=checkpointer)
