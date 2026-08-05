@@ -270,9 +270,14 @@ def _embed_journal(date: str, content: str, user_id: str, filename: str) -> str:
 
     일지는 원문 위에 놓이는 요약 계층이며, 여러 날에 걸친 질문에 답할 때의
     주 진입점이 된다. 저장만 하고 임베딩하지 않으면 이 계층이 끊긴다.
+
+    어떤 소스를 보고 썼는지도 함께 기록한다. 나중에 날짜로 다시 세면 그 사이
+    추가된 소스까지 '포함됐다'고 잘못 표시되기 때문이다 — 일지는 쓰던 시점의
+    자료로 만들어진 것이지 지금 자료로 만들어진 것이 아니다.
     """
     try:
         store = _open_collection(user_id)
+        contributors = _contributing_sources(store, date)
 
         # 같은 날짜의 이전 일지를 제거해 중복 누적을 막는다
         existing = store.get(where={"$and": [
@@ -293,6 +298,8 @@ def _embed_journal(date: str, content: str, user_id: str, filename: str) -> str:
                 "file_path": filename,
                 "date": date,
                 "date_origin": "journal",
+                # 쓰던 시점에 어떤 소스를 봤는지. 화면에서 '이 일지의 재료'로 보여준다.
+                "contributors": json.dumps(contributors, ensure_ascii=False),
                 "embedded_at": datetime.now().isoformat(),
             },
         )])
@@ -504,3 +511,129 @@ def describe_journal_progress(progress: dict) -> str:
         tail = f", 실패 {len(failed)}건" if failed else ""
         return f"완료 ({len(progress.get('written') or [])}건 작성{tail})"
     return ""
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 일지 관리 화면용 조회
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _contributing_sources(store: Chroma, date: str) -> list[dict]:
+    """
+    그 날짜에 기록이 있는 소스를 세어 돌려준다 (일지 자신은 제외).
+
+    Returns:
+        [{"source_id": 7, "name": "...", "type": "git_log", "chunks": 3}, ...]
+    """
+    try:
+        found = store.get(where={"date": date}, include=["metadatas"])
+    except Exception as e:
+        print(f"[journal] 기여 소스 조회 실패 ({date}): {e}")
+        return []
+
+    tally: dict[int, dict] = {}
+    for meta in found.get("metadatas") or []:
+        if not meta or meta.get("source_type") == "journal":
+            continue
+        key = meta.get("source_id")
+        entry = tally.setdefault(key, {
+            "source_id": key,
+            "name": meta.get("source_name") or "",
+            "type": meta.get("source_type") or "",
+            "chunks": 0,
+        })
+        entry["chunks"] += 1
+
+    return sorted(tally.values(), key=lambda e: -e["chunks"])
+
+
+def _journal_title(path: str) -> str:
+    """일지의 첫 번째 제목 줄. 없으면 첫 줄."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                stripped = line.strip()
+                if stripped.startswith("#"):
+                    return stripped.lstrip("#").strip()
+                if stripped:
+                    return stripped[:60]
+    except OSError:
+        pass
+    return ""
+
+
+def journal_overview(user_id: str) -> dict:
+    """
+    일지 관리 화면에 필요한 것을 한 번에 모은다.
+
+    진실은 파일(logs/*.md)이고 벡터DB는 파생 색인이다. 사용자가 열고 고치는
+    대상이 파일이며, 색인은 언제든 파일에서 다시 만들 수 있기 때문이다.
+    그래서 목록은 파일에서 만들고, 색인 여부를 옆에 표시한다.
+
+    Returns:
+        {"journals": [...], "unindexed": 3}
+    """
+    store = _open_collection(user_id)
+
+    try:
+        indexed = store.get(where={"source_type": "journal"}, include=["metadatas"])
+        by_date = {
+            meta["date"]: meta
+            for meta in (indexed.get("metadatas") or [])
+            if meta and meta.get("date")
+        }
+    except Exception as e:
+        print(f"[journal] 색인 조회 실패: {e}")
+        by_date = {}
+
+    journals = []
+    for name in sorted(os.listdir(LOGS_DIR) if os.path.isdir(LOGS_DIR) else [], reverse=True):
+        if not name.endswith("_log.md"):
+            continue
+
+        date = normalize_date(name.replace("_log.md", "").replace(".", "-"))
+        if not date:
+            continue
+
+        path = f"{LOGS_DIR}/{name}"
+        meta = by_date.get(date)
+
+        # 기록해 둔 것이 있으면 그것을 쓴다. 없는 옛 일지는 날짜로 다시 세되,
+        # 그 사이 소스가 바뀌었을 수 있으므로 추정이라고 밝힌다.
+        if meta and meta.get("contributors"):
+            try:
+                sources, estimated = json.loads(meta["contributors"]), False
+            except (ValueError, TypeError):
+                sources, estimated = _contributing_sources(store, date), True
+        else:
+            sources, estimated = _contributing_sources(store, date), True
+
+        journals.append({
+            "date": date,
+            "title": _journal_title(path),
+            "path": path,
+            "chars": os.path.getsize(path),
+            "indexed": date in by_date,
+            "sources": sources,
+            "sources_estimated": estimated,
+        })
+
+    return {
+        "journals": journals,
+        "unindexed": sum(1 for j in journals if not j["indexed"]),
+    }
+
+
+def reindex_journal(user_id: str, date: str) -> str:
+    """파일에 있는 일지를 벡터DB에 다시 등록한다."""
+    normalized = normalize_date(date)
+    if not normalized:
+        return f"❌ '{date}'를 날짜로 해석하지 못했습니다."
+
+    path = _journal_path(normalized)
+    if not os.path.exists(path):
+        return f"❌ 일지 파일이 없습니다: {path}"
+
+    with open(path, encoding="utf-8") as f:
+        content = f.read()
+
+    return _embed_journal(normalized, content, user_id, path)

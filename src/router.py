@@ -7,7 +7,12 @@ from . import unified_controller_single as controller
 from .storage.database import get_db
 from .storage.models import Source, EmbeddingStatus
 from .tools.embedding import _delete_source_embeddings, describe_progress, is_stale
-from .tools.log import describe_journal_progress, journal_progress
+from .tools.log import (
+    describe_journal_progress,
+    journal_overview,
+    journal_progress,
+    reindex_journal,
+)
 import json
 
 router = APIRouter()
@@ -196,6 +201,46 @@ async def unified_agent_endpoint(user_id: str = Form(...), message: str = Form(.
     """
     res = controller.unified_agent(user_id, message)
     return {"response": res}
+
+
+@router.get("/user/{user_id}/journals")
+async def get_journals_page(request: Request, user_id: str, db: Session = Depends(get_db)):
+    """
+    일지 관리 화면.
+
+    진실은 파일(logs/*.md)이고 벡터DB는 파생 색인이다. 그래서 목록은 파일에서
+    만들고 색인 여부를 옆에 표시한다 — 파일은 있는데 색인이 없으면 일지를
+    썼는데도 나중에 물어보면 "기록이 없습니다"가 나온다.
+
+    머리말에는 등록된 소스를 URL 과 함께 싣는다. 일지의 재료가 어디서 왔는지
+    화면 안에서 바로 확인할 수 있어야 하기 때문이다.
+    """
+    controller.get_user_info(db, user_id=user_id)
+
+    sources = db.query(Source).filter(
+        Source.user_id == user_id,
+        Source.is_active == True
+    ).order_by(Source.id).all()
+
+    overview = journal_overview(user_id)
+
+    return templates.TemplateResponse(
+        request=request,
+        name="journals.html",
+        context={
+            "user_id": user_id,
+            "sources": sources,
+            "journals": overview["journals"],
+            "unindexed": overview["unindexed"],
+        },
+    )
+
+
+@router.post("/user/{user_id}/journals/{date}/reindex")
+async def reindex_journal_endpoint(user_id: str, date: str):
+    """파일에 있는 일지를 벡터DB에 다시 등록한다 (색인이 어긋났을 때)."""
+    message = reindex_journal(user_id, date)
+    return {"success": not message.startswith("❌"), "message": message}
 
 
 @router.get("/user/{user_id}/journals/status")
