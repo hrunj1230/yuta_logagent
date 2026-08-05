@@ -6,16 +6,24 @@
 제공 도구:
     - retriever_vectordb: 날짜(또는 날짜 범위) 기반 VectorDB 검색
     - maker_logfile: 일지 파일 저장 및 재임베딩
+    - generate_daily_journals: 기간 안의 날짜마다 일지를 하나씩 생성
 
 설계 노트:
     검색은 날짜 메타데이터 필터만 사용합니다. 날짜 문자열을 임베딩해 유사도로
     찾는 방식은 날짜와 아무 상관관계가 없으므로 폴백으로도 쓰지 않습니다.
     해당 날짜에 기록이 없으면 그 사실을 그대로 알립니다.
+
+    기간 요청은 날짜별로 쪼개 처리합니다. 일주일치를 한 번에 조회하면 49,728자로
+    분량 예산을 넘겨 문서가 통째로 빠지는데, 하루씩 처리하면 가장 큰 날도
+    24,113자라 예산에 닿지 않습니다. 유실이 구조적으로 불가능해집니다.
 """
+import json
 import os
+import threading
 from datetime import date as date_cls, datetime, timedelta
 
 from langchain_core.documents import Document
+from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import tool
 from langchain_chroma import Chroma
 
@@ -296,3 +304,203 @@ def _embed_journal(date: str, content: str, user_id: str, filename: str) -> str:
         # 파일 저장은 이미 성공했으므로 임베딩 실패로 전체를 실패 처리하지 않는다
         print(f"[maker_logfile] 일지 임베딩 실패: {e}")
         return f"⚠️ 파일은 저장했으나 검색 등록에 실패했습니다: {e}"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 기간 일지 생성 — 날짜별로 쪼개서 하나씩
+# ─────────────────────────────────────────────────────────────────────────────
+
+# 일지 생성 진행률. 백그라운드 스레드가 쓰고 화면 폴링이 읽는다.
+# 서버가 죽으면 작업도 함께 죽으므로 메모리에 둔다 — 임베딩은 수십 분씩 돌아
+# DB(sources.embedding_stats)에 남기지만, 일지 생성은 몇 분이면 끝난다.
+_journal_jobs: dict[str, dict] = {}
+_journal_lock = threading.Lock()
+
+# 하루 일지를 쓰는 LLM 에게 주는 지침.
+# 도구를 붙이지 않는다 — 자료를 받아 요약을 뱉는 정형 작업이라 판단이 필요 없고,
+# 도구 스키마 2,071 토큰을 날짜마다 다시 실을 이유가 없다.
+DAILY_JOURNAL_PROMPT = """당신은 개발자의 하루를 정리하는 일지 작성자입니다.
+
+주어진 자료는 그날 하루의 기록입니다 — 커밋 이력, 작성한 문서, AI 와 나눈 대화.
+이것만 보고 그날의 일지를 마크다운으로 작성하세요.
+
+원칙:
+- 자료에 없는 내용을 지어내지 마세요. 근거가 자료에 있어야 합니다.
+- 나열이 아니라 흐름을 쓰세요. 무엇을 하려 했고, 무엇에 막혔고, 어떻게 풀었는지.
+- 커밋 메시지를 그대로 옮겨 적지 말고, 무엇을 만든 것인지로 바꿔 쓰세요.
+- 막힌 지점과 해결 과정이 있으면 반드시 남기세요. 나중에 가장 쓸모 있는 부분입니다.
+- 자료가 빈약하면 짧게 쓰세요. 분량을 채우려 부풀리지 마세요.
+
+응답은 일지 본문만 담습니다. "다음은 일지입니다" 같은 머리말을 붙이지 마세요."""
+
+
+def journal_progress(user_id: str) -> dict:
+    """진행 상황 스냅샷 (화면 폴링용)."""
+    with _journal_lock:
+        return dict(_journal_jobs.get(user_id) or {})
+
+
+def _set_progress(user_id: str, **fields) -> None:
+    with _journal_lock:
+        _journal_jobs.setdefault(user_id, {}).update(fields)
+
+
+def _journal_path(date: str) -> str:
+    return f"{LOGS_DIR}/{date.replace('-', '.')}_log.md"
+
+
+def _dates_with_records(user_id: str, targets: list[str]) -> list[str]:
+    """
+    기간 안에서 실제로 기록이 있는 날짜만 추린다.
+
+    기록이 없는 날까지 LLM 을 부르면 "자료가 없습니다"라는 일지가 생긴다.
+    """
+    try:
+        store = _open_collection(user_id)
+        where = {"date": targets[0]} if len(targets) == 1 else {"date": {"$in": targets}}
+        found = store.get(where=where, include=["metadatas"])
+    except Exception as e:
+        print(f"[journal] 날짜 조회 실패: {e}")
+        return []
+
+    return sorted({
+        meta["date"]
+        for meta in (found.get("metadatas") or [])
+        if meta and meta.get("date")
+    })
+
+
+def _write_one_day(date: str, user_id: str) -> str:
+    """하루치 자료를 모아 일지를 쓰고 저장한다."""
+    material = retriever_vectordb.invoke({"date": date, "user_id": user_id})
+
+    response = llm_router.anthropic_llm.invoke([
+        SystemMessage(content=DAILY_JOURNAL_PROMPT),
+        HumanMessage(content=f"[{date}] 자료\n\n{material}"),
+    ])
+    body = response.content if isinstance(response.content, str) else str(response.content)
+
+    return maker_logfile.invoke({"date": date, "content": body, "user_id": user_id})
+    # material 과 body 는 지역 변수다. 다음 날짜로 넘어가면 사라지므로
+    # 기간이 길어져도 한 번에 들고 있는 자료는 하루치를 넘지 않는다.
+
+
+def _run_journal_job(user_id: str, dates: list[str]) -> None:
+    """백그라운드에서 날짜별로 일지를 만든다."""
+    written, failed = [], []
+
+    for index, date in enumerate(dates, 1):
+        _set_progress(user_id, phase="writing", done=index - 1, total=len(dates), date=date)
+        try:
+            _write_one_day(date, user_id)
+            written.append(date)
+        except Exception as e:
+            print(f"[journal] {date} 작성 실패: {e}")
+            failed.append(f"{date}({e})")
+
+    _set_progress(
+        user_id, phase="done", done=len(dates), total=len(dates), date="",
+        written=written, failed=failed,
+    )
+    print(f"[journal] 완료 — 작성 {len(written)}건, 실패 {len(failed)}건")
+
+
+@tool
+def generate_daily_journals(
+    start_date: str,
+    end_date: str,
+    user_id: str,
+    existing: str = "",
+) -> str:
+    """
+    기간 안의 날짜마다 일지를 하나씩 만들어 저장합니다 (백그라운드 실행).
+
+    이틀 이상을 요청받으면 retriever_vectordb 대신 이 도구를 쓰세요.
+    날짜별로 따로 처리하므로 기간이 길어도 자료가 잘리지 않습니다.
+
+    이미 일지가 있는 날이 있으면 작업을 시작하지 않고 사용자에게 물어봅니다.
+    사용자의 답을 받은 뒤 existing 을 채워 다시 호출하세요.
+
+    Args:
+        start_date: 시작일 (YYYY-MM-DD)
+        end_date: 종료일 (YYYY-MM-DD)
+        user_id: 사용자 ID
+        existing: 이미 일지가 있는 날 처리 방법.
+                  "skip"=건너뛰기, "overwrite"=다시 쓰기.
+                  비워 두면 겹치는 날이 있을 때 사용자에게 확인을 요청합니다.
+
+    Returns:
+        시작 안내 또는 확인 요청 (완료 결과가 아님)
+    """
+    start = parse_user_date(start_date)
+    finish = parse_user_date(end_date)
+    if not start or not finish:
+        return "❌ 날짜를 해석하지 못했습니다. YYYY-MM-DD 형식으로 알려주세요."
+
+    targets = _date_range(start, finish)
+
+    running = journal_progress(user_id)
+    if running.get("phase") == "writing":
+        return (
+            f"⏳ 이미 일지를 만드는 중입니다 "
+            f"({running.get('done', 0)}/{running.get('total', 0)}, 현재 {running.get('date', '')})."
+        )
+
+    dates = _dates_with_records(user_id, targets)
+    if not dates:
+        period = f"{start} ~ {finish}"
+        return f"📭 '{period}'에 기록된 자료가 없어 만들 일지가 없습니다."
+
+    already = [date for date in dates if os.path.exists(_journal_path(date))]
+
+    if already and not existing:
+        preview = ", ".join(already[:5]) + (f" 외 {len(already) - 5}일" if len(already) > 5 else "")
+        return (
+            f"🤔 기간 안 {len(dates)}일 중 {len(already)}일은 이미 일지가 있습니다: {preview}\n\n"
+            "이 날들을 어떻게 할까요?\n"
+            "- 건너뛰고 나머지만 만들기\n"
+            "- 자료를 다시 읽어 새로 쓰기 (기존 일지는 덮어씁니다)\n\n"
+            "사용자에게 물어본 뒤 existing 에 \"skip\" 또는 \"overwrite\" 를 넣어 다시 호출하세요."
+        )
+
+    skipped = []
+    if existing == "skip":
+        skipped = already
+        dates = [date for date in dates if date not in already]
+
+    if not dates:
+        return f"✅ 기간 안 {len(skipped)}일 모두 이미 일지가 있어 새로 만들 것이 없습니다."
+
+    _set_progress(user_id, phase="starting", done=0, total=len(dates), date="",
+                  written=[], failed=[], skipped=skipped)
+
+    threading.Thread(
+        target=_run_journal_job,
+        args=(user_id, dates),
+        daemon=True,
+        name=f"journal-{user_id}",
+    ).start()
+
+    notice = f"🚀 {start} ~ {finish} 기간의 일지를 만들기 시작했습니다 ({len(dates)}일)."
+    if skipped:
+        notice += f"\n이미 일지가 있는 {len(skipped)}일은 건너뜁니다."
+    notice += "\n\n하루씩 차례로 작성하며, 진행 상황은 화면에 표시됩니다."
+    return notice
+
+
+def describe_journal_progress(progress: dict) -> str:
+    """진행 상태를 사람이 읽을 문장으로 만든다."""
+    phase = progress.get("phase")
+    done, total = progress.get("done") or 0, progress.get("total") or 0
+
+    if phase == "starting":
+        return "준비 중"
+    if phase == "writing":
+        date = progress.get("date") or ""
+        percent = f", {done * 100 // total}%" if total else ""
+        return f"{date} 작성 중 ({done}/{total}{percent})"
+    if phase == "done":
+        failed = progress.get("failed") or []
+        tail = f", 실패 {len(failed)}건" if failed else ""
+        return f"완료 ({len(progress.get('written') or [])}건 작성{tail})"
+    return ""

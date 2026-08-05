@@ -7,6 +7,7 @@ from . import unified_controller_single as controller
 from .storage.database import get_db
 from .storage.models import Source, EmbeddingStatus
 from .tools.embedding import _delete_source_embeddings, describe_progress, is_stale
+from .tools.log import describe_journal_progress, journal_progress
 import json
 
 router = APIRouter()
@@ -195,6 +196,29 @@ async def unified_agent_endpoint(user_id: str = Form(...), message: str = Form(.
     """
     res = controller.unified_agent(user_id, message)
     return {"response": res}
+
+
+@router.get("/user/{user_id}/journals/status")
+async def get_journals_status(user_id: str):
+    """
+    기간 일지 생성 진행 상황 (화면 폴링용).
+
+    generate_daily_journals 는 날짜별로 하나씩 만드느라 몇 분씩 걸리므로
+    백그라운드 스레드에서 돈다. 화면은 이 엔드포인트를 주기적으로 조회한다.
+    """
+    progress = journal_progress(user_id)
+
+    return {
+        "running": progress.get("phase") in ("starting", "writing"),
+        "phase": progress.get("phase") or "",
+        "progress_text": describe_journal_progress(progress),
+        "done": progress.get("done") or 0,
+        "total": progress.get("total") or 0,
+        "current_date": progress.get("date") or "",
+        "written": progress.get("written") or [],
+        "skipped": progress.get("skipped") or [],
+        "failed": progress.get("failed") or [],
+    }
 
 
 @router.get("/user/{user_id}/sources/status")
