@@ -40,7 +40,7 @@ from langchain_core.messages import (
 from langgraph.graph import StateGraph, START, END, add_messages
 from langgraph.prebuilt import ToolNode, tools_condition
 from langgraph.checkpoint.memory import InMemorySaver
-from . import llm_router
+from .llm_router import codex_llm as llm #codex_llm , anthropic_llm
 from .tools import source as source_tools
 from .tools import embedding as embedding_tools
 from .tools import log as log_tools
@@ -99,7 +99,7 @@ unified_tools = [
 ]
 
 # 단일 Agent용 Anthropic Claude (안정적이고 도구 호출 지원)
-llm_with_tools = llm_router.anthropic_llm.bind_tools(unified_tools)
+llm_with_tools = llm.bind_tools(unified_tools)
 
 
 def create_system_message(user_id: str) -> SystemMessage:
@@ -149,14 +149,8 @@ def create_system_message(user_id: str) -> SystemMessage:
 - 하나의 저장소에 문서와 코드가 섞여 있다면 git과 git_log를 각각 등록해도 됩니다.
 
 일지 도구 사용법:
-- 모든 일지 도구에 user_id({user_id})를 반드시 전달하세요.
-- 하루치 일지: retriever_vectordb로 그날 자료를 검색한 후 maker_logfile로 저장하세요.
-- 이틀 이상의 기간 일지: generate_daily_journals를 쓰세요. 날짜마다 일지를 하나씩 만듭니다.
-  기간을 retriever_vectordb로 한 번에 조회하면 분량 한도에 걸려 자료가 통째로 빠집니다.
-- generate_daily_journals가 "이미 일지가 있습니다"라고 답하면, 그 내용을 사용자에게 전하고
-  건너뛸지 다시 쓸지 물어보세요. 답을 받으면 existing에 "skip" 또는 "overwrite"를 넣어
-  다시 호출하세요. 사용자에게 묻지 않고 임의로 정하지 마세요.
-- generate_daily_journals는 작업을 '시작'만 하고 즉시 돌아옵니다. 완료 결과가 아닙니다.
+- retriever_vectordb와 maker_logfile 모두 user_id({user_id})를 반드시 전달하세요.
+- "이번 주", "지난 3일" 처럼 기간을 묻는 요청은 date에 시작일, end_date에 종료일을 넣으세요.
 - 검색 결과가 "기록이 없습니다"로 나오면 임의로 지어내지 말고, 안내된 '기록이 있는 날짜'를 사용자에게 알려주세요.
 
 임베딩은 백그라운드로 동작합니다:

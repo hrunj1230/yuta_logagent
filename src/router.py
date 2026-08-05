@@ -29,7 +29,7 @@ router = APIRouter()
 # Jinja2 템플릿 설정
 templates = Jinja2Templates(directory="templates")
 
-
+##class
 # 로그인 관련 모델
 class LoginRequest(BaseModel):
     user_id: str
@@ -50,74 +50,6 @@ async def login_page(request: Request):
         request=request,
         name="login.html"
     )
-
-@router.get("/debugger")
-async def architecture_debugger(request: Request, user_id: str = ""):
-    """현재 구현을 작은 세계처럼 탐색하는 아키텍처 디버거 UI."""
-    return templates.TemplateResponse(
-        request=request,
-        name="debugger.html",
-        context={"user_id": user_id.strip()},
-    )
-
-
-@router.get("/api/debugger/snapshot")
-async def debugger_snapshot(user_id: str = "", db: Session = Depends(get_db)):
-    """디버거 UI에 SQLite/ChromaDB의 읽기 전용 현재 상태를 제공한다."""
-    sources = []
-    status_counts = {status.value: 0 for status in EmbeddingStatus}
-
-    query = db.query(Source).filter(Source.is_active == True)
-    if user_id.strip():
-        query = query.filter(Source.user_id == user_id.strip())
-
-    for source in query.order_by(Source.id.asc()).all():
-        status = source.embedding_status.value
-        status_counts[status] += 1
-        sources.append({
-            "id": source.id,
-            "user_id": source.user_id,
-            "name": source.name,
-            "type": source.type.value,
-            "location": source.location,
-            "embedding_status": status,
-            "last_synced_at": (
-                source.last_synced_at.isoformat() if source.last_synced_at else None
-            ),
-            "error": source.embedding_error,
-        })
-
-    vector_count = None
-    vector_state = "사용자 선택 필요"
-    selected_user = user_id.strip()
-    if selected_user:
-        try:
-            collection = controller.llm_router.chroma_client.get_collection(
-                name=f"user_{selected_user}"
-            )
-            vector_count = collection.count()
-            vector_state = "연결됨"
-        except Exception:
-            vector_count = 0
-            vector_state = "컬렉션 없음"
-
-    return {
-        "ok": True,
-        "user_id": selected_user or None,
-        "source_count": len(sources),
-        "vector_count": vector_count,
-        "vector_state": vector_state,
-        "status_counts": status_counts,
-        "sources": sources,
-        "runtime": {
-            "api": "FastAPI",
-            "agent": "LangGraph 단일 Agent",
-            "llm": "Claude Sonnet 4.5",
-            "embedding": "jhgan/ko-sroberta-multitask",
-            "checkpointer": "메모리 (재시작 시 초기화)",
-        },
-    }
-
 @router.post("/login-form")
 async def login_form(user_id: str = Form(...), db: Session = Depends(get_db)):
     """
@@ -198,6 +130,80 @@ async def delete_source(user_id: str, source_id: int, db: Session = Depends(get_
         "deleted_chunks": deleted_chunks,
     }
 
+
+#etc-router
+@router.get("/debugger")
+async def architecture_debugger(request: Request, user_id: str = ""):
+    """현재 구현을 작은 세계처럼 탐색하는 아키텍처 디버거 UI."""
+    return templates.TemplateResponse(
+        request=request,
+        name="debugger.html",
+        context={"user_id": user_id.strip()},
+    )
+
+@router.get("/api/debugger/snapshot")
+async def debugger_snapshot(user_id: str = "", db: Session = Depends(get_db)):
+    """디버거 UI에 SQLite/ChromaDB의 읽기 전용 현재 상태를 제공한다."""
+    sources = []
+    status_counts = {status.value: 0 for status in EmbeddingStatus}
+
+    query = db.query(Source).filter(Source.is_active == True)
+    if user_id.strip():
+        query = query.filter(Source.user_id == user_id.strip())
+
+    for source in query.order_by(Source.id.asc()).all():
+        status = source.embedding_status.value
+        status_counts[status] += 1
+        sources.append({
+            "id": source.id,
+            "user_id": source.user_id,
+            "name": source.name,
+            "type": source.type.value,
+            "location": source.location,
+            "embedding_status": status,
+            "last_synced_at": (
+                source.last_synced_at.isoformat() if source.last_synced_at else None
+            ),
+            "error": source.embedding_error,
+        })
+
+    vector_count = None
+    vector_state = "사용자 선택 필요"
+    selected_user = user_id.strip()
+    if selected_user:
+        try:
+            collection = controller.llm_router.chroma_client.get_collection(
+                name=f"user_{selected_user}"
+            )
+            vector_count = collection.count()
+            vector_state = "연결됨"
+        except Exception:
+            vector_count = 0
+            vector_state = "컬렉션 없음"
+
+    return {
+        "ok": True,
+        "user_id": selected_user or None,
+        "source_count": len(sources),
+        "vector_count": vector_count,
+        "vector_state": vector_state,
+        "status_counts": status_counts,
+        "sources": sources,
+        "runtime": {
+            "api": "FastAPI",
+            "agent": "LangGraph 단일 Agent",
+            "llm": "Claude Sonnet 4.5",
+            "embedding": "jhgan/ko-sroberta-multitask",
+            "checkpointer": "메모리 (재시작 시 초기화)",
+        },
+    }
+
+
+
+
+
+
+
 #agent-router
 @router.post("/unified_agent")
 async def unified_agent_endpoint(user_id: str = Form(...), message: str = Form(...)):
@@ -211,7 +217,6 @@ async def unified_agent_endpoint(user_id: str = Form(...), message: str = Form(.
     res = controller.unified_agent(user_id, message)
     return {"response": res}
 
-
 @router.get("/user/{user_id}/journals")
 async def get_journals_page(request: Request, user_id: str, db: Session = Depends(get_db)):
     """
@@ -219,7 +224,7 @@ async def get_journals_page(request: Request, user_id: str, db: Session = Depend
 
     진실은 파일(logs/*.md)이고 벡터DB는 파생 색인이다. 그래서 목록은 파일에서
     만들고 색인 여부를 옆에 표시한다 — 파일은 있는데 색인이 없으면 일지를
-    썼는데도 나중에 물어보면 "기록이 없습니다"가 나온다.
+    썼는데도 나중에 물어보면 "없습니다"가 나온다.
 
     머리말에는 등록된 소스를 URL 과 함께 싣는다. 일지의 재료가 어디서 왔는지
     화면 안에서 바로 확인할 수 있어야 하기 때문이다.
