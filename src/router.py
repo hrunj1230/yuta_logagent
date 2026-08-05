@@ -6,7 +6,12 @@ from sqlalchemy.orm import Session
 from . import unified_controller_single as controller
 from .storage.database import get_db
 from .storage.models import Source, EmbeddingStatus
-from .tools.embedding import _delete_source_embeddings, describe_progress, is_stale
+from .tools.embedding import (
+    _delete_source_embeddings,
+    describe_progress,
+    embedding_coverage,
+    is_stale,
+)
 from .tools.log import (
     describe_journal_progress,
     journal_overview,
@@ -223,6 +228,13 @@ async def get_journals_page(request: Request, user_id: str, db: Session = Depend
     ).order_by(Source.id).all()
 
     overview = journal_overview(user_id)
+    coverage = embedding_coverage(user_id)
+
+    # 일지가 있는 날짜를 표에 함께 표시한다 — '자료는 있는데 일지가 없는 날'이
+    # 드러나야 다음에 무엇을 만들지 알 수 있다
+    written = {journal["date"] for journal in overview["journals"]}
+    for row in coverage["rows"]:
+        row["has_journal"] = row["date"] in written
 
     return templates.TemplateResponse(
         request=request,
@@ -232,6 +244,7 @@ async def get_journals_page(request: Request, user_id: str, db: Session = Depend
             "sources": sources,
             "journals": overview["journals"],
             "unindexed": overview["unindexed"],
+            "coverage": coverage,
         },
     )
 

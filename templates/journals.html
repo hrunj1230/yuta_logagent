@@ -88,6 +88,71 @@
         }
         .source-url:hover { text-decoration: underline; }
 
+        /* ── 소스별 임베딩 현황 ───────────────────────────────── */
+        .cov-summary {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+            gap: 12px;
+            margin-bottom: 20px;
+        }
+
+        .cov-card {
+            border: 1px solid #e8eaf0;
+            border-radius: 8px;
+            padding: 14px 16px;
+        }
+        .cov-card-head { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+        .cov-name { font-weight: 600; font-size: 14px; word-break: break-all; }
+
+        .cov-numbers { display: flex; gap: 14px; font-size: 13px; color: #666; }
+        .cov-numbers b { font-size: 17px; color: #333; margin-right: 2px; }
+
+        .cov-span {
+            margin-top: 6px;
+            font-size: 12px;
+            color: #999;
+            font-family: 'SF Mono', ui-monospace, Menlo, Consolas, monospace;
+        }
+
+        .cov-hint { font-size: 13px; color: #888; margin-bottom: 10px; }
+
+        /* 날짜가 수십 줄이라 표만 따로 스크롤한다 */
+        .cov-table-wrap {
+            max-height: 380px;
+            overflow: auto;
+            border: 1px solid #e8eaf0;
+            border-radius: 8px;
+        }
+
+        .cov-table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+
+        .cov-table th {
+            position: sticky;
+            top: 0;
+            background: #f7f8fb;
+            padding: 10px 8px;
+            border-bottom: 1px solid #e8eaf0;
+            font-weight: 600;
+            font-size: 12px;
+            color: #666;
+            z-index: 1;
+        }
+        .cov-table td { padding: 8px; border-bottom: 1px solid #f2f3f7; text-align: center; }
+        .cov-table tbody tr:hover { background: #fafbfd; }
+
+        .cov-table .c-date {
+            text-align: left;
+            font-family: 'SF Mono', ui-monospace, Menlo, Consolas, monospace;
+            white-space: nowrap;
+            padding-left: 14px;
+        }
+        .cov-table .c-total { font-weight: 600; color: #555; }
+
+        .cell-has { font-weight: 600; color: #2e7d32; }
+        .cell-none { color: #ccc; }
+
+        .cov-foot { margin-top: 10px; font-size: 12.5px; color: #999; text-align: right; }
+
         /* ── 색인 어긋남 알림 ─────────────────────────────────── */
         .warn-bar {
             background: #fff8e1;
@@ -237,6 +302,77 @@
         </div>
         {% else %}
         <div class="empty-state">등록된 소스가 없습니다.</div>
+        {% endif %}
+    </div>
+
+    <div class="card">
+        <h2>📊 소스별 임베딩 현황</h2>
+
+        {% if coverage.sources %}
+        <div class="cov-summary">
+            {% for source in coverage.sources %}
+            <div class="cov-card">
+                <div class="cov-card-head">
+                    <span class="type-chip t-{{ source.type }}">{{ source.type }}</span>
+                    <span class="cov-name">{{ source.name }}</span>
+                </div>
+                <div class="cov-numbers">
+                    <span><b>{{ source.chunks }}</b>청크</span>
+                    <span><b>{{ source.days }}</b>일</span>
+                </div>
+                <div class="cov-span">{{ source.first }} ~ {{ source.last }}</div>
+            </div>
+            {% endfor %}
+        </div>
+
+        <div class="cov-hint">
+            날짜마다 어떤 소스가 들어와 있는지입니다.
+            <span class="cell-none">·</span> 는 그날 그 소스에 기록이 없다는 뜻입니다.
+        </div>
+
+        <div class="cov-table-wrap">
+            <table class="cov-table">
+                <thead>
+                    <tr>
+                        <th class="c-date">날짜</th>
+                        {% for source in coverage.sources %}
+                        <th class="c-src" title="{{ source.name }}">
+                            <span class="type-chip t-{{ source.type }}">{{ source.type }}</span>
+                        </th>
+                        {% endfor %}
+                        <th class="c-total">합계</th>
+                        <th class="c-journal">일지</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in coverage.rows %}
+                    <tr>
+                        <td class="c-date">{{ row.date }}</td>
+                        {% for source in coverage.sources %}
+                        <td class="c-src">
+                            {% if row.counts.get(source.source_id) %}
+                            <span class="cell-has">{{ row.counts[source.source_id] }}</span>
+                            {% else %}
+                            <span class="cell-none">·</span>
+                            {% endif %}
+                        </td>
+                        {% endfor %}
+                        <td class="c-total">{{ row.total }}</td>
+                        <td class="c-journal">
+                            {% if row.has_journal %}
+                            <span class="cell-has">✔</span>
+                            {% else %}
+                            <span class="cell-none">·</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        <div class="cov-foot">기록이 있는 날 {{ coverage.dates }}일</div>
+        {% else %}
+        <div class="empty-state">아직 임베딩된 자료가 없습니다.</div>
         {% endif %}
     </div>
 

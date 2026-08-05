@@ -785,3 +785,72 @@ def describe_progress(stats: dict) -> str:
     if phase == "embedding" and total:
         return f"{label} ({done}/{total} 청크, {done * 100 // total}%)"
     return label
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 임베딩 현황 화면용 조회
+# ─────────────────────────────────────────────────────────────────────────────
+
+def embedding_coverage(user_id: str) -> dict:
+    """
+    소스별로 어느 날짜가 임베딩돼 있는지 집계한다.
+
+    청크마다 date·source_id·source_type 이 이미 붙어 있으므로 새로 저장할 것이
+    없다. 세기만 하면 된다.
+
+    날짜 × 소스 표로 보면 '이 날은 커밋은 있는데 TIL 이 없다' 같은 구멍이
+    드러난다. 소스마다 다루는 기간이 다르기 때문에 총계만으로는 보이지 않는다.
+
+    Returns:
+        {"sources": [소스별 요약], "rows": [날짜별 한 줄], "dates": 총 날짜 수}
+    """
+    try:
+        collection = _get_chroma_collection(user_id)
+        found = collection.get(include=["metadatas"])
+    except Exception as e:
+        print(f"[coverage] 조회 실패: {e}")
+        return {"sources": [], "rows": [], "dates": 0}
+
+    # (소스 → 날짜 → 청크 수). 일지는 재료가 아니라 결과물이므로 뺀다.
+    per_source: dict[int, dict] = {}
+    per_date: dict[str, dict[int, int]] = defaultdict(dict)
+
+    for meta in found.get("metadatas") or []:
+        if not meta or not meta.get("date") or meta.get("source_type") == "journal":
+            continue
+
+        source_id = meta.get("source_id")
+        entry = per_source.setdefault(source_id, {
+            "source_id": source_id,
+            "name": meta.get("source_name") or "",
+            "type": meta.get("source_type") or "",
+            "chunks": 0,
+            "dates": set(),
+        })
+        entry["chunks"] += 1
+        entry["dates"].add(meta["date"])
+
+        per_date[meta["date"]][source_id] = per_date[meta["date"]].get(source_id, 0) + 1
+
+    sources = []
+    for entry in sorted(per_source.values(), key=lambda e: (e["type"], e["name"])):
+        dates = sorted(entry.pop("dates"))
+        sources.append({
+            **entry,
+            "days": len(dates),
+            "first": dates[0] if dates else "",
+            "last": dates[-1] if dates else "",
+        })
+
+    rows = [
+        {
+            "date": date,
+            "counts": per_date[date],
+            "total": sum(per_date[date].values()),
+            # 그날 자료가 있는데 비어 있는 소스는 화면에서 '·' 로 보여 구멍이 드러난다
+            "missing": [s["source_id"] for s in sources if s["source_id"] not in per_date[date]],
+        }
+        for date in sorted(per_date, reverse=True)
+    ]
+
+    return {"sources": sources, "rows": rows, "dates": len(rows)}
