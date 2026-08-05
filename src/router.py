@@ -13,11 +13,15 @@ from .tools.embedding import (
     is_stale,
 )
 from .tools.log import (
+    HIGHLIGHT_CSS,
     describe_journal_progress,
+    journal_archive,
     journal_overview,
     journal_progress,
     reindex_journal,
+    render_journal,
 )
+from fastapi.responses import Response
 import json
 
 router = APIRouter()
@@ -295,6 +299,62 @@ async def get_journals_status(user_id: str):
         "skipped": progress.get("skipped") or [],
         "failed": progress.get("failed") or [],
     }
+
+
+# ── 아래 세 경로는 반드시 /journals/summary·/journals/status 뒤에 둔다.
+#    FastAPI 는 등록 순서대로 맞추므로, {date} 를 먼저 두면 'summary' 가
+#    날짜로 잡혀 뷰어가 404 를 낸다.
+
+@router.get("/user/{user_id}/journals/download-all")
+async def download_all_journals(user_id: str):
+    """모든 일지를 zip 으로 내려받는다 (원본 마크다운 그대로)."""
+    data, count = journal_archive(user_id)
+
+    if not count:
+        raise HTTPException(status_code=404, detail="내려받을 일지가 없습니다")
+
+    return Response(
+        content=data,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{user_id}-journals.zip"'},
+    )
+
+
+@router.get("/user/{user_id}/journals/{date}/download")
+async def download_journal(user_id: str, date: str):
+    """
+    일지 한 편을 마크다운 원본으로 내려받는다.
+
+    렌더된 HTML 이 아니라 원문을 준다 — 옵시디언이나 노션으로 그대로 옮길 수
+    있어야 한다.
+    """
+    view = render_journal(user_id, date)
+    if not view:
+        raise HTTPException(status_code=404, detail="일지를 찾을 수 없습니다")
+
+    filename = f"{view['date'].replace('-', '.')}_log.md"
+    return Response(
+        content=view["raw"],
+        media_type="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/user/{user_id}/journals/{date}")
+async def get_journal_view(request: Request, user_id: str, date: str,
+                           db: Session = Depends(get_db)):
+    """일지 한 편을 읽는 화면 (마크다운 렌더)."""
+    controller.get_user_info(db, user_id=user_id)
+
+    view = render_journal(user_id, date)
+    if not view:
+        raise HTTPException(status_code=404, detail="일지를 찾을 수 없습니다")
+
+    return templates.TemplateResponse(
+        request=request,
+        name="journal_view.html",
+        context={"user_id": user_id, "view": view, "highlight_css": HIGHLIGHT_CSS},
+    )
 
 
 @router.get("/user/{user_id}/sources/status")

@@ -204,9 +204,33 @@
             font-size: 17px;
             font-weight: 700;
             font-family: 'SF Mono', ui-monospace, Menlo, Consolas, monospace;
+            color: #333;
+            text-decoration: none;
         }
+        .journal-date:hover { color: #667eea; }
 
-        .journal-title { color: #555; font-size: 15px; flex: 1; }
+        .journal-title { color: #555; font-size: 15px; flex: 1; text-decoration: none; }
+        .journal-title:hover { color: #667eea; text-decoration: underline; }
+
+        .list-head {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+            margin-bottom: 18px;
+        }
+        .list-head h2 { margin-bottom: 0; }
+
+        .zip-btn {
+            padding: 8px 14px;
+            background: #f0f1f5;
+            color: #555;
+            border-radius: 6px;
+            text-decoration: none;
+            font-size: 13.5px;
+        }
+        .zip-btn:hover { background: #e4e6ec; }
 
         .journal-meta { font-size: 13px; color: #888; white-space: nowrap; }
 
@@ -387,7 +411,12 @@
     {% endif %}
 
     <div class="card">
-        <h2>🗓 생성된 일지 ({{ journals|length }}건)</h2>
+        <div class="list-head">
+            <h2>🗓 생성된 일지 ({{ journals|length }}건)</h2>
+            {% if journals %}
+            <a class="zip-btn" href="/user/{{ user_id }}/journals/download-all">전체 다운로드 (.zip)</a>
+            {% endif %}
+        </div>
 
         {% if journals %}
         <div class="journal-list">
@@ -395,8 +424,10 @@
             <div class="journal {% if not journal.indexed %}unindexed{% endif %}"
                  data-date="{{ journal.date }}">
                 <div class="journal-head">
-                    <span class="journal-date">{{ journal.date }}</span>
-                    <span class="journal-title">{{ journal.title }}</span>
+                    <a class="journal-date" href="/user/{{ user_id }}/journals/{{ journal.date }}"
+                       title="일지 열기">{{ journal.date }}</a>
+                    <a class="journal-title" href="/user/{{ user_id }}/journals/{{ journal.date }}"
+                       >{{ journal.title }}</a>
                     <span class="journal-meta">
                         {{ '{:,}'.format(journal.chars) }}자
                         {% if journal.indexed %}

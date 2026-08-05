@@ -17,15 +17,23 @@
     분량 예산을 넘겨 문서가 통째로 빠지는데, 하루씩 처리하면 가장 큰 날도
     24,113자라 예산에 닿지 않습니다. 유실이 구조적으로 불가능해집니다.
 """
+import io
 import json
 import os
+import re
 import threading
+import zipfile
 from datetime import date as date_cls, datetime, timedelta
 
 from langchain_core.documents import Document
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import tool
 from langchain_chroma import Chroma
+from markdown_it import MarkdownIt
+from pygments import highlight
+from pygments.formatters import HtmlFormatter
+from pygments.lexers import get_lexer_by_name
+from pygments.util import ClassNotFound
 
 from .. import llm_router
 from .ingest_rules import normalize_date, parse_user_date
@@ -546,19 +554,30 @@ def _contributing_sources(store: Chroma, date: str) -> list[dict]:
     return sorted(tally.values(), key=lambda e: -e["chunks"])
 
 
-def _journal_title(path: str) -> str:
-    """일지의 첫 번째 제목 줄. 없으면 첫 줄."""
+def _journal_head(path: str) -> tuple[str, int]:
+    """
+    일지의 제목 줄과 글자 수.
+
+    파일 크기(getsize)를 글자 수로 쓰면 안 된다 — 한글은 UTF-8 에서 3바이트라
+    실제보다 세 배 가까이 부풀려 보인다 (1,340자 문서가 2,202 으로 표시됐다).
+    """
     try:
         with open(path, encoding="utf-8") as f:
-            for line in f:
-                stripped = line.strip()
-                if stripped.startswith("#"):
-                    return stripped.lstrip("#").strip()
-                if stripped:
-                    return stripped[:60]
+            text = f.read()
     except OSError:
-        pass
-    return ""
+        return "", 0
+
+    title = ""
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            title = stripped.lstrip("#").strip()
+            break
+        if stripped:
+            title = stripped[:60]
+            break
+
+    return title, len(text)
 
 
 def journal_overview(user_id: str) -> dict:
@@ -607,11 +626,12 @@ def journal_overview(user_id: str) -> dict:
         else:
             sources, estimated = _contributing_sources(store, date), True
 
+        title, chars = _journal_head(path)
         journals.append({
             "date": date,
-            "title": _journal_title(path),
+            "title": title,
             "path": path,
-            "chars": os.path.getsize(path),
+            "chars": chars,
             "indexed": date in by_date,
             "sources": sources,
             "sources_estimated": estimated,
@@ -637,3 +657,115 @@ def reindex_journal(user_id: str, date: str) -> str:
         content = f.read()
 
     return _embed_journal(normalized, content, user_id, path)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 일지 뷰어 — 마크다운 렌더
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _highlight_code(code: str, lang: str, attrs: str) -> str:
+    """
+    코드 블록에 색을 입힌다. 언어를 모르면 빈 문자열을 돌려주는데,
+    그러면 markdown-it 이 알아서 이스케이프한 기본 블록을 만든다.
+    """
+    if not lang:
+        return ""
+    try:
+        lexer = get_lexer_by_name(lang)
+    except ClassNotFound:
+        return ""
+    return highlight(code, lexer, HtmlFormatter(cssclass="hl"))
+
+
+# html=False 가 핵심이다. 일지는 LLM 이 쓰지만 그 재료는 사용자 저장소의 문서와
+# 커밋 메시지다 — 남의 저장소를 소스로 등록하면 임의의 HTML 이 흘러들 수 있다.
+_markdown = (
+    MarkdownIt("commonmark", {"html": False, "highlight": _highlight_code})
+    .enable("table")
+    .enable("strikethrough")
+)
+
+# Pygments 스타일시트는 손으로 쓰지 않고 뽑아 쓴다 — 테마를 바꿔도 따라온다
+HIGHLIGHT_CSS = HtmlFormatter(cssclass="hl", style="friendly").get_style_defs(".hl")
+
+# CommonMark 는 GFM 체크박스를 모른다. 플러그인을 더 받는 대신 렌더 뒤에 바꾼다.
+_TASK_OPEN = re.compile(r"<li>(<p>)?\[([ xX])\]\s*")
+
+
+def _render_task_lists(html: str) -> str:
+    """`- [ ]` / `- [x]` 를 체크박스로 바꾼다."""
+    def swap(match: re.Match) -> str:
+        paragraph, mark = match.group(1) or "", match.group(2)
+        done = mark.lower() == "x"
+        box = '<span class="task-box done">✔</span>' if done else '<span class="task-box"></span>'
+        return f'<li class="task{" done" if done else ""}">{paragraph}{box}'
+
+    return _TASK_OPEN.sub(swap, html)
+
+
+def render_journal(user_id: str, date: str) -> dict | None:
+    """
+    일지 한 편을 화면에 띄울 형태로 만든다.
+
+    Returns:
+        {"date", "title", "html", "raw", "chars", "sources", ...} 또는
+        파일이 없으면 None
+    """
+    normalized = normalize_date(date)
+    if not normalized:
+        return None
+
+    path = _journal_path(normalized)
+    if not os.path.exists(path):
+        return None
+
+    with open(path, encoding="utf-8") as f:
+        raw = f.read()
+
+    overview = journal_overview(user_id)
+    dates = [journal["date"] for journal in overview["journals"]]
+    current = next((j for j in overview["journals"] if j["date"] == normalized), None)
+
+    # 목록은 최신순이므로 '이전 글'은 뒤쪽 = 더 오래된 날이다
+    index = dates.index(normalized) if normalized in dates else -1
+    newer = dates[index - 1] if index > 0 else ""
+    older = dates[index + 1] if 0 <= index < len(dates) - 1 else ""
+
+    title, chars = _journal_head(path)
+    return {
+        "date": normalized,
+        "title": title,
+        "html": _render_task_lists(_markdown.render(raw)),
+        "raw": raw,
+        "chars": chars,
+        "path": path,
+        "indexed": bool(current and current["indexed"]),
+        "sources": current["sources"] if current else [],
+        "sources_estimated": bool(current and current["sources_estimated"]),
+        "newer": newer,
+        "older": older,
+    }
+
+
+def journal_archive(user_id: str) -> tuple[bytes, int]:
+    """
+    모든 일지를 zip 으로 묶는다.
+
+    렌더된 HTML 이 아니라 원본 마크다운을 담는다 — 옵시디언이나 노션으로
+    그대로 옮길 수 있어야 한다.
+
+    Returns:
+        (zip 바이트, 담긴 파일 수)
+    """
+    buffer = io.BytesIO()
+    count = 0
+
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        for journal in journal_overview(user_id)["journals"]:
+            try:
+                archive.write(journal["path"], arcname=os.path.basename(journal["path"]))
+                count += 1
+            except OSError as e:
+                print(f"[journal] 압축 실패 ({journal['path']}): {e}")
+
+    return buffer.getvalue(), count
