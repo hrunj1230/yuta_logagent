@@ -236,6 +236,24 @@ async def get_journals_page(request: Request, user_id: str, db: Session = Depend
     )
 
 
+@router.get("/user/{user_id}/journals/summary")
+async def get_journals_summary(user_id: str):
+    """
+    메인 화면의 일지 카드용 요약.
+
+    색인이 빠진 일지 수를 함께 내보낸다 — 파일은 있는데 검색이 안 되는 상태는
+    사용자가 알아챌 방법이 없으므로 첫 화면에서 눈에 띄어야 한다.
+    """
+    overview = journal_overview(user_id)
+    journals = overview["journals"]
+
+    return {
+        "total": len(journals),
+        "unindexed": overview["unindexed"],
+        "latest": journals[0]["date"] if journals else "",
+    }
+
+
 @router.post("/user/{user_id}/journals/{date}/reindex")
 async def reindex_journal_endpoint(user_id: str, date: str):
     """파일에 있는 일지를 벡터DB에 다시 등록한다 (색인이 어긋났을 때)."""
