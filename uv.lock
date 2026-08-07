@@ -1868,12 +1868,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/01/c8/248b201f6d753d69fd5d6506011abbb35a946d9142b2ae311a948fd0be3d/mcp-1.29.0-py3-none-any.whl", hash = "sha256:f5a075bb611f23d6f4d080c6a1699fa62772eebc562ba9e66b306ddde1c755f7", size = 223436, upload-time = "2026-07-28T13:41:40.337Z" },
 ]
 
-[package.optional-dependencies]
-cli = [
-    { name = "python-dotenv" },
-    { name = "typer" },
-]
-
 [[package]]
 name = "mdurl"
 version = "0.1.2"
@@ -4512,7 +4506,6 @@ dependencies = [
     { name = "langchain-unstructured" },
     { name = "langgraph" },
     { name = "langsmith" },
-    { name = "mcp", extra = ["cli"] },
     { name = "pytest" },
     { name = "python-dotenv" },
     { name = "python-multipart" },
@@ -4537,7 +4530,6 @@ requires-dist = [
     { name = "langchain-unstructured", specifier = ">=1.0.1" },
     { name = "langgraph", specifier = ">=1.2.8" },
     { name = "langsmith", specifier = ">=0.9.8" },
-    { name = "mcp", extras = ["cli"], specifier = ">=1.0.0,<2.0.0" },
     { name = "pytest", specifier = ">=9.1.1" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "python-multipart", specifier = ">=0.0.5" },
