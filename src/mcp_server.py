@@ -25,14 +25,6 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-# mcp_server.py 는 src/ 안에 있지만, 임포트와 경로 기준은 프로젝트 루트다.
-PROJECT_ROOT = Path(__file__).parent.parent
-os.chdir(PROJECT_ROOT)
-sys.path.insert(0, str(PROJECT_ROOT))
-
-from dotenv import load_dotenv
-load_dotenv()
-
 from fastmcp import FastMCP
 from langchain_core.documents import Document
 
@@ -137,4 +129,12 @@ def get_log_status(date: str, user_id: str = "jeong") -> str:
 
 
 if __name__ == "__main__":
+    # 단독 실행 시에만 경로 설정
+    PROJECT_ROOT = Path(__file__).parent.parent
+    os.chdir(PROJECT_ROOT)
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+    from dotenv import load_dotenv
+    load_dotenv()
+
     mcp.run()
